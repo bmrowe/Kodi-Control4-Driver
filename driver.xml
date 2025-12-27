@@ -1,0 +1,219 @@
+<devicedata>
+  <copyright>Bryan Rowe 2025</copyright>
+  <creator>Bryan Rowe</creator>
+  <manufacturer>Bryan Rowe</manufacturer>
+  <name>Kodi IP Control</name>
+  <model>Kodi v21+</model>
+  <created>12/27/2025 12:00 PM</created>
+  <modified>12/27/2025 1:44 PM</modified>
+  <version>16</version>
+  <control>lua_gen</control>
+  <controlmethod>ip</controlmethod>
+  <driver>DriverWorks</driver>
+  <small>icons/device_sm.png</small>
+  <large>icons/device_lg.png</large>
+  
+  <categories>
+    <category>Audio/Video</category>
+  </categories>
+  
+  <proxies>
+    <proxy>media_player</proxy>
+  </proxies>
+  
+  <connections>
+    <connection>
+      <id>5001</id>
+      <type>2</type>
+      <connectionname>Control4 UI</connectionname>
+      <consumer>False</consumer>
+      <linelevel>False</linelevel>
+      <classes>
+        <class>
+          <classname>MEDIA_PLAYER</classname>
+        </class>
+      </classes>
+    </connection>
+    <connection>
+      <id>2000</id>
+      <type>5</type>
+      <connectionname>AV Out</connectionname>
+      <consumer>False</consumer>
+      <linelevel>True</linelevel>
+      <classes>
+        <class>
+          <classname>HDMI</classname>
+        </class>
+      </classes>
+    </connection>
+  </connections>
+  
+  <config>
+    <documentation>
+    Kodi IP Control Driver
+
+    ======================================
+    KODI SETUP REQUIREMENTS
+    ======================================
+
+    Before using this driver, configure Kodi to accept remote control commands:
+
+    1. On your Kodi device, go to: Settings > Services > Control
+    2. Enable: "Allow remote control via HTTP"
+    3. Set Port to: 8080 (or your preferred port)
+    4. Enable: "Allow remote control from applications on this system"
+    5. Enable: "Allow remote control from applications on other systems"
+    6. Leave username and password blank (or configure authentication if needed)
+
+    ======================================
+    DRIVER CONFIGURATION
+    ======================================
+
+    IP Address:
+      Enter the IP address of your Kodi device. 
+      Recommended: Set a static IP or DHCP reservation for your Kodi device.
+
+    Port:
+      The HTTP port configured in Kodi (default: 8080)
+
+    Skip Interval (seconds):
+      How many seconds to skip forward or backward when using the skip buttons.
+      Default: 30 seconds. Range: 5-600 seconds.
+
+    Program Buttons A/B/C/D (Red/Green/Yellow/Blue):
+      Configure what each colored button does:
+      - Show Codec Info: Display video/audio codec information
+      - Show OSD: Toggle on-screen display
+      - Show Player Process Info: Display detailed playback information
+      - Toggle Subtitles: Turn subtitles on/off
+      - Next Subtitle: Switch to next subtitle track
+      - Next Audio Track: Switch to next audio track
+      - Screenshot: Take a screenshot
+
+    Debug Mode:
+      Enable to see detailed logging in Composer Pro's Lua Output window.
+      Useful for troubleshooting. Remember to turn off after debugging.
+
+    ======================================
+    FEATURES
+    ======================================
+
+    - Navigation: Up, Down, Left, Right, Enter, Cancel (Back), Menu, Info
+    - Playback: Play, Pause, Stop
+    - Skip: Skip forward/backward by configurable interval
+    - Scan: Fast forward (2x) and rewind (-2x)
+    - Auto Room On: Automatically turns room on when Play is pressed
+    - Programmable Buttons: Four customizable buttons for quick access
+
+    ======================================
+    TROUBLESHOOTING
+    ======================================
+
+    - If commands don't work, verify Kodi's web interface is accessible 
+      by visiting http://[IP]:8080 in a browser
+    - Enable Debug Mode and check Lua Output in Composer Pro for errors
+    - Ensure your Control4 controller can reach the Kodi device's IP
+    - Verify no firewall is blocking port 8080 on the Kodi device
+
+    ======================================
+    VERSION HISTORY
+    ======================================
+
+    Version 16: Fixed documentation location and formatting
+    Version 15: Added configurable Program buttons (A/B/C/D)
+    Version 14: Added documentation
+    Version 13: Added configurable skip interval
+    </documentation>
+    
+    <properties>
+      <property>
+        <name>IP Address</name>
+        <type>STRING</type>
+        <default>192.168.1.100</default>
+      </property>
+      <property>
+        <name>Port</name>
+        <type>STRING</type>
+        <default>8080</default>
+      </property>
+      <property>
+        <name>Skip Interval (seconds)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>5</minimum>
+        <maximum>600</maximum>
+        <default>30</default>
+      </property>
+      <property>
+        <name>Program A Button (Red)</name>
+        <type>LIST</type>
+        <default>Show Codec Info</default>
+        <items>
+          <item>None</item>
+          <item>Show Codec Info</item>
+          <item>Show OSD</item>
+          <item>Show Player Process Info</item>
+          <item>Toggle Subtitles</item>
+          <item>Next Subtitle</item>
+          <item>Next Audio Track</item>
+          <item>Screenshot</item>
+        </items>
+      </property>
+      <property>
+        <name>Program B Button (Green)</name>
+        <type>LIST</type>
+        <default>Toggle Subtitles</default>
+        <items>
+          <item>None</item>
+          <item>Show Codec Info</item>
+          <item>Show OSD</item>
+          <item>Show Player Process Info</item>
+          <item>Toggle Subtitles</item>
+          <item>Next Subtitle</item>
+          <item>Next Audio Track</item>
+          <item>Screenshot</item>
+        </items>
+      </property>
+      <property>
+        <name>Program C Button (Yellow)</name>
+        <type>LIST</type>
+        <default>Next Audio Track</default>
+        <items>
+          <item>None</item>
+          <item>Show Codec Info</item>
+          <item>Show OSD</item>
+          <item>Show Player Process Info</item>
+          <item>Toggle Subtitles</item>
+          <item>Next Subtitle</item>
+          <item>Next Audio Track</item>
+          <item>Screenshot</item>
+        </items>
+      </property>
+      <property>
+        <name>Program D Button (Blue)</name>
+        <type>LIST</type>
+        <default>Screenshot</default>
+        <items>
+          <item>None</item>
+          <item>Show Codec Info</item>
+          <item>Show OSD</item>
+          <item>Show Player Process Info</item>
+          <item>Toggle Subtitles</item>
+          <item>Next Subtitle</item>
+          <item>Next Audio Track</item>
+          <item>Screenshot</item>
+        </items>
+      </property>
+      <property>
+        <name>Debug Mode</name>
+        <type>LIST</type>
+        <default>OFF</default>
+        <items>
+          <item>OFF</item>
+          <item>ON</item>
+        </items>
+      </property>
+    </properties>
+    
+    <script file="driver.lua"></script>
+  </config>
+</devicedata>

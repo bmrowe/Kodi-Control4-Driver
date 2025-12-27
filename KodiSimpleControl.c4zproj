@@ -1,0 +1,6 @@
+﻿<Driver type="c4z" name="KodiSimpleControl" squishLua="true" manualsquish="false">
+ <Items>
+  <Item type="file" name="driver.lua" />
+  <Item type="file" name="driver.xml" />
+ </Items>
+</Driver>
