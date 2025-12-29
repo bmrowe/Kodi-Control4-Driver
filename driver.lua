@@ -218,13 +218,10 @@ function ExecuteProgramButton(action)
   elseif action == "Show Player Process Info" then
     SendKodiCommand("Input.ExecuteAction", {action = "playerprocessinfo"})
   elseif action == "Toggle Subtitles" then
-    SendKodiCommand("Player.SetSubtitle", {playerid = 0, subtitle = "toggle"})
     SendKodiCommand("Player.SetSubtitle", {playerid = 1, subtitle = "toggle"})
   elseif action == "Next Subtitle" then
-    SendKodiCommand("Player.SetSubtitle", {playerid = 0, subtitle = "next"})
     SendKodiCommand("Player.SetSubtitle", {playerid = 1, subtitle = "next"})
   elseif action == "Next Audio Track" then
-    SendKodiCommand("Player.SetAudioStream", {playerid = 0, stream = "next"})
     SendKodiCommand("Player.SetAudioStream", {playerid = 1, stream = "next"})
   elseif action == "Screenshot" then
     SendKodiCommand("Input.ExecuteAction", {action = "screenshot"})
@@ -245,33 +242,26 @@ function ReceivedFromProxy(BindingID, strCommand, tParams)
       
     elseif strCommand == "PLAY" then
       C4:SendToProxy(5001, "ON", {})
-      SendKodiCommand("Player.PlayPause", {playerid = 0, play = true})
       SendKodiCommand("Player.PlayPause", {playerid = 1, play = true})
       
     elseif strCommand == "PAUSE" then
-      SendKodiCommand("Player.PlayPause", {playerid = 0, play = false})
       SendKodiCommand("Player.PlayPause", {playerid = 1, play = false})
       
     elseif strCommand == "STOP" then
-      SendKodiCommand("Player.Stop", {playerid = 0})
       SendKodiCommand("Player.Stop", {playerid = 1})
       
     elseif strCommand == "SKIP_FWD" then
       local skipSeconds = tonumber(Properties["Skip Interval (seconds)"]) or 30
-      SendKodiCommand("Player.Seek", {playerid = 0, value = {seconds = skipSeconds}})
       SendKodiCommand("Player.Seek", {playerid = 1, value = {seconds = skipSeconds}})
       
     elseif strCommand == "SKIP_REV" then
       local skipSeconds = tonumber(Properties["Skip Interval (seconds)"]) or 30
-      SendKodiCommand("Player.Seek", {playerid = 0, value = {seconds = -skipSeconds}})
       SendKodiCommand("Player.Seek", {playerid = 1, value = {seconds = -skipSeconds}})
       
     elseif strCommand == "SCAN_FWD" then
-      SendKodiCommand("Player.SetSpeed", {playerid = 0, speed = 2})
       SendKodiCommand("Player.SetSpeed", {playerid = 1, speed = 2})
       
     elseif strCommand == "SCAN_REV" then
-      SendKodiCommand("Player.SetSpeed", {playerid = 0, speed = -2})
       SendKodiCommand("Player.SetSpeed", {playerid = 1, speed = -2})
       
     elseif strCommand == "PROGRAM_A" then
