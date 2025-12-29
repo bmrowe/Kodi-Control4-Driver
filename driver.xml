@@ -4,9 +4,9 @@
   <manufacturer>Bryan Rowe</manufacturer>
   <name>Kodi IP Control</name>
   <model>Kodi v21+</model>
-  <created>12/27/2025 12:00 PM</created>
-  <modified>12/27/2025 1:44 PM</modified>
-  <version>16</version>
+  <created>12/28/2025 12:00 PM</created>
+  <modified>12/28/2025 1:44 PM</modified>
+  <version>17</version>
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
@@ -211,6 +211,82 @@
           <item>OFF</item>
           <item>ON</item>
         </items>
+      </property>
+      <property>
+        <name>Enable Polling</name>
+        <type>LIST</type>
+        <default>OFF</default>
+        <items>
+          <item>OFF</item>
+          <item>ON</item>
+        </items>
+      </property>
+      <property>
+        <name>Poll Interval (seconds)</name>
+        <type>RANGED_INTEGER</type>
+        <minimum>1</minimum>
+        <maximum>60</maximum>
+        <default>5</default>
+      </property>
+      <property>
+        <name>Player State</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>Stopped</default>
+      </property>
+      <property>
+        <name>Media Type</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>-</default>
+      </property>
+      <property>
+        <name>Screen Saver</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>Inactive</default>
+      </property>
+      <property>
+        <name>Video Resolution</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>-</default>
+      </property>
+      <property>
+        <name>Video Aspect Ratio</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>-</default>
+      </property>
+      <property>
+        <name>CPU Usage</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>-</default>
+      </property>
+      <property>
+        <name>Memory Usage</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>-</default>
+      </property>
+      <property>
+        <name>System Temperature</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>-</default>
+      </property>
+      <property>
+        <name>System Uptime</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>-</default>
+      </property>
+      <property>
+        <name>Kodi Version</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>-</default>
       </property>
     </properties>
     
