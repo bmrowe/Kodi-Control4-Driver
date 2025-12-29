@@ -5,6 +5,7 @@ local BINDING_ID = 5001
 local VIDEO_PLAYER_ID = 1
 local DEFAULT_SKIP_SECONDS = 30
 local DEFAULT_POLL_INTERVAL = 5
+local HTTP_TIMEOUT_MS = 5000  -- 5 second timeout
 
 -- Utility Functions
 local function isDebugMode()
@@ -14,6 +15,12 @@ end
 local function debugLog(message)
   if isDebugMode() then
     print("Kodi: " .. message)
+  end
+end
+
+local function debugLogJson(message, data)
+  if isDebugMode() then
+    print("Kodi: " .. message .. ": " .. C4:JsonEncode(data or {}))
   end
 end
 
@@ -33,9 +40,17 @@ local function sendHttpRequest(url, jsonData, callback)
   local headers = {["Content-Type"] = "application/json"}
   
   C4:url()
+    :SetOptions({
+      timeout = HTTP_TIMEOUT_MS,
+      connect_timeout = 3000  -- 3 second connection timeout
+    })
     :OnDone(function(transfer, responses, errCode, errMsg)
       if errCode ~= 0 then
-        debugLog("Error " .. tostring(errCode) .. ": " .. tostring(errMsg))
+        if errCode == -1 then
+          debugLog("HTTP timeout - Kodi not responding")
+        else
+          debugLog("HTTP error " .. tostring(errCode) .. ": " .. tostring(errMsg))
+        end
         if callback then callback(nil) end
       else
         if callback and responses[1] and responses[1].body then
@@ -83,6 +98,15 @@ function SendKodiCommandRaw(jsonString, callback)
   sendHttpRequest(url, jsonString, callback)
 end
 
+-- Batched JSON-RPC call
+local function sendBatchRequest(requests, callback)
+  local url = buildKodiUrl()
+  if not url then return end
+  
+  debugLog("Sending batch request with " .. #requests .. " commands")
+  sendHttpRequest(url, C4:JsonEncode(requests), callback)
+end
+
 -- Polling Functions
 local function processPlayerState(speed)
   if speed == 0 then
@@ -112,7 +136,7 @@ local function pollPlayerProperties(playerid)
   )
   
   SendKodiCommandRaw(query, function(response)
-    debugLog("GetProperties response: " .. C4:JsonEncode(response or {}))
+    debugLogJson("GetProperties response", response)
     
     if response and response.result then
       processPlayerState(response.result.speed)
@@ -149,40 +173,68 @@ local function processSystemLabels(labels)
   end
 end
 
-local function pollSystemInfo()
-  local query = '{"jsonrpc":"2.0","method":"XBMC.GetInfoLabels","params":{"labels":["System.ScreenSaverActive","System.CpuUsage","System.FreeMemory","System.CPUTemperature","System.Uptime(hh:mm)","System.BuildVersion"]},"id":1}'
+function PollKodiStatus()
+  -- Batch request: Get active players + system info in ONE HTTP call
+  local batchRequests = {
+    {
+      jsonrpc = "2.0",
+      method = "Player.GetActivePlayers",
+      params = {},
+      id = 1
+    },
+    {
+      jsonrpc = "2.0",
+      method = "XBMC.GetInfoLabels",
+      params = {
+        labels = {
+          "System.ScreenSaverActive",
+          "System.CpuUsage",
+          "System.FreeMemory",
+          "System.CPUTemperature",
+          "System.Uptime(hh:mm)",
+          "System.BuildVersion"
+        }
+      },
+      id = 2
+    }
+  }
   
-  SendKodiCommandRaw(query, function(response)
-    debugLog("GetInfoLabels response: " .. C4:JsonEncode(response or {}))
+  sendBatchRequest(batchRequests, function(responses)
+    if not responses then return end
     
-    if response and response.result then
-      processSystemLabels(response.result)
+    debugLogJson("Batch response", responses)
+    
+    -- Process GetActivePlayers (id=1)
+    local playerResponse = nil
+    local systemResponse = nil
+    
+    for _, response in ipairs(responses) do
+      if response.id == 1 then
+        playerResponse = response
+      elseif response.id == 2 then
+        systemResponse = response
+      end
     end
-  end)
-end
-
-local function pollActivePlayers()
-  SendKodiCommand("Player.GetActivePlayers", {}, function(response)
-    debugLog("GetActivePlayers response: " .. C4:JsonEncode(response or {}))
     
-    if response and response.result and #response.result > 0 then
-      local playerid = response.result[1].playerid
-      local playertype = response.result[1].type
+    -- Handle player status
+    if playerResponse and playerResponse.result and #playerResponse.result > 0 then
+      local playerid = playerResponse.result[1].playerid
+      local playertype = playerResponse.result[1].type
       
       debugLog("Active player found - ID: " .. playerid .. ", Type: " .. playertype)
       
       updateProperty("Media Type", playertype or "-")
-      pollPlayerProperties(playerid)
+      pollPlayerProperties(playerid)  -- This still needs a separate call
     else
       debugLog("No active players found")
       clearPlayerProperties()
     end
+    
+    -- Handle system info
+    if systemResponse and systemResponse.result then
+      processSystemLabels(systemResponse.result)
+    end
   end)
-end
-
-function PollKodiStatus()
-  pollActivePlayers()
-  pollSystemInfo()
 end
 
 function StartPolling()
