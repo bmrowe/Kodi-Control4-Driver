@@ -12,15 +12,12 @@
   <driver>DriverWorks</driver>
   <small>icons/device_sm.png</small>
   <large>icons/device_lg.png</large>
-  
   <categories>
     <category>Audio/Video</category>
   </categories>
-  
   <proxies>
     <proxy>media_player</proxy>
   </proxies>
-  
   <connections>
     <connection>
       <id>5001</id>
@@ -47,7 +44,6 @@
       </classes>
     </connection>
   </connections>
-  
   <config>
     <documentation>
     Kodi IP Control Driver
@@ -58,7 +54,7 @@
 
     Before using this driver, configure Kodi to accept remote control commands:
 
-    1. On your Kodi device, go to: Settings > Services > Control
+    1. On your Kodi device, go to: Settings &gt; Services &gt; Control
     2. Enable: "Allow remote control via HTTP"
     3. Set Port to: 8080 (or your preferred port)
     4. Enable: "Allow remote control from applications on this system"
@@ -124,7 +120,6 @@
     Version 14: Added documentation
     Version 13: Added configurable skip interval
     </documentation>
-    
     <properties>
       <property>
         <name>IP Address</name>
@@ -289,7 +284,6 @@
         <default>-</default>
       </property>
     </properties>
-    
     <script file="driver.lua"></script>
   </config>
 </devicedata>
