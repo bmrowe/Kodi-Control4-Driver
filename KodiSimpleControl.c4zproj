@@ -1,7 +1,12 @@
 ﻿<Driver type="c4z" name="KodiSimpleControl" squishLua="true" manualsquish="false">
  <Items>
   <Item type="dir" c4zDir="drivers-common-public" name="drivers-common-public" recurse="true" exclude="false" />
+  <Item type="file" name="av_details.lua" />
+  <Item type="file" name="c4_utils.lua" />
+  <Item type="file" name="commands.lua" />
   <Item type="file" name="driver.lua" />
   <Item type="file" name="driver.xml" />
+  <Item type="file" name="kodi_rpc.lua" />
+  <Item type="file" name="notifications.lua" />
  </Items>
 </Driver>

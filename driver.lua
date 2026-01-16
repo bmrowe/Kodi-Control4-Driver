@@ -1,73 +1,33 @@
-----------------------------------------
--- CONSTANTS
-----------------------------------------
-local BINDING_ID = 5001
-local WS_PORT = 9090
-local DEFAULT_SKIP_SECONDS = 30
+local C4Utils = require("c4_utils")
+local KodiRpc = require("kodi_rpc")
+local AvDetails = require("av_details")
+local Notifications = require("notifications")
+local Commands = require("commands")
+local WebSocket = require("drivers-common-public.module.websocket")
+local MEDIA_PLAYER_BINDING_ID = 5001
+local KODI_WEBSOCKET_PORT = 9090
+local DEFAULT_SKIP_INTERVAL_SECONDS = 30
 local RECONNECT_DELAY_MS = 5000
-local CALLBACK_TIMEOUT_MS = 10000
-local MEDIA_INFO_DEBOUNCE_MS = 500
+local JSONRPC_CALLBACK_TIMEOUT_MS = 10000
+local AV_DETAILS_DEBOUNCE_MS = 500
+local logger = C4Utils.createLogger("Kodi: ")
+local logInfo = logger.info
+local logDebug = logger.debug
 
-----------------------------------------
--- STATE
-----------------------------------------
 local state = {
-  ws = nil,
-  currentId = 0,
-  callbacks = {},
-  playbackDirectionalMode = "PM4K",
-  inPlayback = false,
-  shuttingDown = false,
-  reconnectTimer = nil,
-  mediaInfoTimer = nil,
+  webSocket = nil,
+  directionalsMode = "PM4K", -- "PM4K" or "Kodi"
+  isInPlayback = false,
+  isShuttingDown = false,
+  reconnectTimerId = nil,
 }
 
-----------------------------------------
--- LOGGING
-----------------------------------------
-local function log(msg)
-  print("Kodi: " .. msg)
-end
-
-local function dlog(msg)
-  if Properties and Properties["Debug Mode"] == "ON" then
-    print("Kodi: " .. msg)
-  end
-end
-
-----------------------------------------
--- HELPER FUNCTIONS
-----------------------------------------
 local function updateProperty(name, value)
-  C4:UpdateProperty(name, value)
+  C4Utils.updateProperty(name, value)
 end
 
-local function loadPlaybackDirectionalMode()
-  if not Properties then return end
-  
-  local v = Properties["Playback Directionals"]
-  if v == "Kodi" then
-    state.playbackDirectionalMode = "Kodi"
-  else
-    state.playbackDirectionalMode = "PM4K"
-  end
-  dlog("Playback Directionals mode set to: " .. state.playbackDirectionalMode)
-end
-
-local function shouldUsePlaybackDirectionals()
-  return state.inPlayback and state.playbackDirectionalMode == "Kodi"
-end
-
-local function getSkipInterval()
-  if not Properties then return DEFAULT_SKIP_SECONDS end
-  return tonumber(Properties["Skip Interval (seconds)"]) or DEFAULT_SKIP_SECONDS
-end
-
-local function cancelTimer(timerRef)
-  if timerRef then
-    C4:KillTimer(timerRef)
-  end
-  return nil
+local function cancelTimer(timerId)
+  return C4Utils.cancelTimer(timerId)
 end
 
 local function isAutoRoomOnEnabled()
@@ -78,471 +38,199 @@ local function isAutoRoomOffEnabled()
   return Properties and Properties["Auto Room Off"] == "ON"
 end
 
-----------------------------------------
--- JSON-RPC
-----------------------------------------
-local function sendCommand(method, params, callback)
-  if not state.ws or not state.ws.running then
-    dlog("Cannot send " .. method .. " - WebSocket not connected")
-    return false
+local function loadDirectionalsModeFromProperties()
+  if not Properties then return end
+
+  local directionalsSetting = Properties["Playback Directionals"]
+  if directionalsSetting == "Kodi" then
+    state.directionalsMode = "Kodi"
+  else
+    state.directionalsMode = "PM4K"
   end
 
-  state.currentId = state.currentId + 1
-  if state.currentId > 9999 then state.currentId = 1 end
-
-  local id = state.currentId
-  local idKey = tostring(id)
-  
-  local request = {
-    jsonrpc = "2.0",
-    id = id,
-    method = method,
-    params = params or {}
-  }
-
-  if callback then
-    state.callbacks[idKey] = callback
-    
-    -- Timeout cleanup to prevent memory leak
-    C4:SetTimer(CALLBACK_TIMEOUT_MS, function()
-      if state.callbacks[idKey] then
-        dlog("Callback timeout for " .. method .. " (id=" .. id .. ")")
-        state.callbacks[idKey] = nil
-      end
-    end)
-  end
-
-  dlog("Sending: " .. method .. " (id=" .. id .. ")")
-  state.ws:Send(C4:JsonEncode(request))
-  return true
+  logDebug("Playback Directionals mode set to: " .. state.directionalsMode)
 end
 
-local function sendGetInfoLabels(labels, callback)
-  if not state.ws or not state.ws.running then
-    dlog("Cannot send GetInfoLabels - WebSocket not connected")
-    return false
-  end
-
-  state.currentId = state.currentId + 1
-  if state.currentId > 9999 then state.currentId = 1 end
-
-  local id = state.currentId
-  local idKey = tostring(id)
-  
-  if callback then
-    state.callbacks[idKey] = callback
-    
-    C4:SetTimer(CALLBACK_TIMEOUT_MS, function()
-      if state.callbacks[idKey] then
-        dlog("Callback timeout for GetInfoLabels (id=" .. id .. ")")
-        state.callbacks[idKey] = nil
-      end
-    end)
-  end
-
-  -- Manually construct JSON array (C4:JsonEncode doesn't handle Lua arrays properly)
-  local labelList = {}
-  for _, label in ipairs(labels) do
-    table.insert(labelList, '"' .. label .. '"')
-  end
-  local labelsJson = '[' .. table.concat(labelList, ',') .. ']'
-  
-  local json = string.format('{"jsonrpc":"2.0","id":%d,"method":"XBMC.GetInfoLabels","params":{"labels":%s}}', 
-                              id, labelsJson)
-  
-  dlog("Sending: XBMC.GetInfoLabels (id=" .. id .. ")")
-  state.ws:Send(json)
-  return true
+local function shouldUseKodiPlaybackDirectionals()
+  return state.isInPlayback and state.directionalsMode == "Kodi"
 end
 
-local function execAction(action)
-  sendCommand("Input.ExecuteAction", {action = action})
+local function getSkipIntervalSeconds()
+  if not Properties then return DEFAULT_SKIP_INTERVAL_SECONDS end
+  return tonumber(Properties["Skip Interval (seconds)"]) or DEFAULT_SKIP_INTERVAL_SECONDS
 end
 
-local function sendInput(inputSuffix)
-  sendCommand("Input." .. inputSuffix, {})
-end
-
-----------------------------------------
--- MEDIA INFO
-----------------------------------------
-local MEDIA_INFO_LABELS = {
-  "Player.Process(videowidth)",
-  "Player.Process(videoheight)",
-  "VideoPlayer.VideoAspect",
-  "VideoPlayer.VideoCodec",
-  "VideoPlayer.HdrType",
-  "VideoPlayer.AudioCodec",
-  "VideoPlayer.AudioChannels",
-  "VideoPlayer.AudioLanguage"
+local autoRoom = {
+  isOnEnabled = isAutoRoomOnEnabled,
+  isOffEnabled = isAutoRoomOffEnabled,
+  sendOn = function() C4:SendToProxy(MEDIA_PLAYER_BINDING_ID, "ON", {}) end,
+  sendOff = function() C4:SendToProxy(MEDIA_PLAYER_BINDING_ID, "OFF", {}) end,
 }
 
-local function requestMediaInfo()
-  dlog("Requesting media info")
-  
-  sendGetInfoLabels(MEDIA_INFO_LABELS, function(result)
-    if result and type(result) == "table" then
-      local function stripCommas(s)
-        if not s or s == "" then return nil end
-        return (tostring(s):gsub(",", ""))
-      end
-      
-      local w = stripCommas(result["Player.Process(videowidth)"])
-      local h = stripCommas(result["Player.Process(videoheight)"])
-      local resolution = (w and h) and (w .. "x" .. h) or "N/A"
-      
-      local aspect = result["VideoPlayer.VideoAspect"] or "N/A"
-      local vcodec = (result["VideoPlayer.VideoCodec"] and result["VideoPlayer.VideoCodec"] ~= "") 
-                     and result["VideoPlayer.VideoCodec"] or "N/A"
-      local hdr = (result["VideoPlayer.HdrType"] and result["VideoPlayer.HdrType"] ~= "") 
-                  and result["VideoPlayer.HdrType"] or "SDR"
-      
-      local acodec = (result["VideoPlayer.AudioCodec"] and result["VideoPlayer.AudioCodec"] ~= "") 
-                     and result["VideoPlayer.AudioCodec"] or "N/A"
-      local ach = (result["VideoPlayer.AudioChannels"] and result["VideoPlayer.AudioChannels"] ~= "") 
-                  and result["VideoPlayer.AudioChannels"] or ""
-      local alang = (result["VideoPlayer.AudioLanguage"] and result["VideoPlayer.AudioLanguage"] ~= "") 
-                    and result["VideoPlayer.AudioLanguage"] or ""
-      
-      local audio = acodec
-      if ach ~= "" then audio = audio .. " " .. ach .. "ch" end
-      if alang ~= "" then audio = audio .. " " .. alang end
-      
-      local videoDetails = resolution .. " | " .. aspect .. " | " .. vcodec .. " " .. hdr
-      local audioDetails = audio
-      
-      updateProperty("Video Details", videoDetails)
-      updateProperty("Audio Details", audioDetails)
-      dlog("Video Details: " .. videoDetails)
-      dlog("Audio Details: " .. audioDetails)
-    else
-      dlog("GetInfoLabels returned invalid data")
-    end
-  end)
-end
+local kodiRpc = KodiRpc:new({
+  jsonEncode = function(value) return C4:JsonEncode(value) end,
+  setTimer = function(ms, callback) return C4:SetTimer(ms, callback) end,
+  callbackTimeoutMs = JSONRPC_CALLBACK_TIMEOUT_MS,
+  logDebug = logDebug,
+  logInfo = logInfo,
+})
 
+local avDetails = AvDetails:new({
+  kodiRpc = kodiRpc,
+  updateProperty = updateProperty,
+  setTimer = function(ms, callback) return C4:SetTimer(ms, callback) end,
+  cancelTimer = cancelTimer,
+  debounceMs = AV_DETAILS_DEBOUNCE_MS,
+  logDebug = logDebug,
+})
 
--- Debounced version to prevent spam from multiple OnAVChange events
-local function scheduleMediaInfoUpdate()
-  state.mediaInfoTimer = cancelTimer(state.mediaInfoTimer)
-  state.mediaInfoTimer = C4:SetTimer(MEDIA_INFO_DEBOUNCE_MS, function()
-    state.mediaInfoTimer = nil
-    requestMediaInfo()
-  end)
-end
+local notificationHandlers = Notifications.createHandlers({
+  state = state,
+  updateProperty = updateProperty,
+  logDebug = logDebug,
+  autoRoom = autoRoom,
+  avDetails = avDetails,
+})
 
-----------------------------------------
--- MESSAGE HANDLERS
-----------------------------------------
-local function handleNotification(method, data)
-  if method == "Player.OnPlay" then
-    dlog("Player.OnPlay notification")
-    local wasInPlayback = state.inPlayback
-    state.inPlayback = true
-    updateProperty("Player State", "Playing")
-    if data and data.item and data.item.type then
-      updateProperty("Media Type", data.item.type)
-    end
+local commandHandlers = Commands.createHandlers({
+  state = state,
+  kodiRpc = kodiRpc,
+  getSkipIntervalSeconds = getSkipIntervalSeconds,
+  shouldUseKodiPlaybackDirectionals = shouldUseKodiPlaybackDirectionals,
+  autoRoom = autoRoom,
+})
 
-    if not wasInPlayback and isAutoRoomOnEnabled() then
-      dlog("Auto Room On: sending ON to proxy")
-      C4:SendToProxy(BINDING_ID, "ON", {})
-    end
-
-  elseif method == "Player.OnPause" then
-    dlog("Player.OnPause notification")
-    state.inPlayback = true
-    updateProperty("Player State", "Paused")
-
-  elseif method == "Player.OnResume" then
-    dlog("Player.OnResume notification")
-    state.inPlayback = true
-    updateProperty("Player State", "Playing")
-
-  elseif method == "Player.OnStop" then
-    dlog("Player.OnStop notification")
-    local wasInPlayback = state.inPlayback
-    state.inPlayback = false
-    state.mediaInfoTimer = cancelTimer(state.mediaInfoTimer)
-    updateProperty("Player State", "Stopped")
-    updateProperty("Media Type", "-")
-    updateProperty("Video Details", "N/A")
-    updateProperty("Audio Details", "N/A")
-
-    if wasInPlayback and isAutoRoomOffEnabled() then
-      dlog("Auto Room Off: sending OFF to proxy")
-      C4:SendToProxy(BINDING_ID, "OFF", {})
-    end
-
-  elseif method == "Player.OnSpeedChanged" then
-    dlog("Player.OnSpeedChanged notification")
-    if data and data.player and data.player.speed ~= nil then
-      if data.player.speed == 0 then
-        updateProperty("Player State", "Paused")
-      elseif data.player.speed == 1 then
-        updateProperty("Player State", "Playing")
-      else
-        updateProperty("Player State", "Fast Forward/Rewind")
-      end
-    end
-
-  elseif method == "Player.OnAVChange" or method == "Player.OnAVStart" then
-    dlog(method .. " notification")
-    scheduleMediaInfoUpdate()
-  end
-end
-
-
-local function processMessage(websocket, data)
-  dlog("Message received")
-  
-  local ok, response = pcall(function() return C4:JsonDecode(data) end)
-  
-  if ok and type(response) == "table" then
-    if response.id then
-      local idKey = tostring(response.id)
-      dlog("Response ID: " .. idKey)
-      
-      local cb = state.callbacks[idKey]
-      if cb then
-        state.callbacks[idKey] = nil
-        
-        if not response.error then
-          cb(response.result)
-        else
-          log("JSON-RPC error: " .. C4:JsonEncode(response.error))
-        end
-      end
-      
-    elseif response.method then
-      dlog("Notification: " .. response.method)
-      handleNotification(response.method, response.params and response.params.data)
-    end
+local function handleKodiNotification(method, data)
+  local handler = notificationHandlers[method]
+  if handler then
+    handler(data)
   else
-    log("Failed to decode JSON message")
+    logDebug("Unhandled notification: " .. tostring(method))
   end
 end
 
-----------------------------------------
--- WEBSOCKET CONNECTION
-----------------------------------------
-local WebSocket = require("drivers-common-public.module.websocket")
+local function processWebSocketMessage(_, rawData)
+  logDebug("Message received")
 
-local function scheduleReconnect()
-  if state.shuttingDown then return end
-  
-  state.reconnectTimer = cancelTimer(state.reconnectTimer)
-  state.reconnectTimer = C4:SetTimer(RECONNECT_DELAY_MS, function()
-    state.reconnectTimer = nil
-    log("Attempting to reconnect...")
-    connectWebSocket()
+  local ok, response = pcall(function() return C4:JsonDecode(rawData) end)
+  if not ok or type(response) ~= "table" then
+    logInfo("Failed to decode JSON message")
+    return
+  end
+
+  if response.id then
+    kodiRpc:handleResponse(response)
+  elseif response.method then
+    logDebug("Notification: " .. response.method)
+    handleKodiNotification(response.method, response.params and response.params.data)
+  end
+end
+
+local connectKodiWebSocket -- forward declaration
+
+local function scheduleWebSocketReconnect()
+  if state.isShuttingDown then return end
+
+  state.reconnectTimerId = cancelTimer(state.reconnectTimerId)
+  state.reconnectTimerId = C4:SetTimer(RECONNECT_DELAY_MS, function()
+    state.reconnectTimerId = nil
+    logInfo("Attempting to reconnect...")
+    connectKodiWebSocket()
   end)
 end
 
-function connectWebSocket()
+connectKodiWebSocket = function()
   if not Properties then
-    log("Properties not available")
-    return
-  end
-  
-  local ip = Properties["IP Address"]
-  if not ip or ip == "" then
-    log("No IP address configured")
+    logInfo("Properties not available")
     return
   end
 
-  if state.ws and state.ws.running then
-    dlog("WebSocket already connected")
+  local ipAddress = Properties["IP Address"]
+  if not ipAddress or ipAddress == "" then
+    logInfo("No IP address configured")
     return
   end
 
-  local url = "ws://" .. ip .. ":" .. WS_PORT .. "/jsonrpc"
-  log("Connecting to " .. url)
-
-  state.ws = WebSocket:new(url)
-  
-  if not state.ws then
-    log("Failed to create WebSocket")
-    scheduleReconnect()
+  if state.webSocket and state.webSocket.running then
+    logDebug("WebSocket already connected")
     return
   end
 
-  state.ws:SetProcessMessageFunction(processMessage)
-  
-  state.ws:SetEstablishedFunction(function(websocket)
-    log("WebSocket connected")
-    state.reconnectTimer = cancelTimer(state.reconnectTimer)
+  local url = "ws://" .. ipAddress .. ":" .. KODI_WEBSOCKET_PORT .. "/jsonrpc"
+  logInfo("Connecting to " .. url)
+
+  state.webSocket = WebSocket:new(url)
+  kodiRpc:setWebSocket(state.webSocket)
+
+  if not state.webSocket then
+    logInfo("Failed to create WebSocket")
+    scheduleWebSocketReconnect()
+    return
+  end
+
+  state.webSocket:SetProcessMessageFunction(processWebSocketMessage)
+
+  state.webSocket:SetEstablishedFunction(function(_)
+    logInfo("WebSocket connected")
+    state.reconnectTimerId = cancelTimer(state.reconnectTimerId)
   end)
-  
-  state.ws:SetOfflineFunction(function(websocket)
-    log("WebSocket offline")
-    if not state.shuttingDown then
-      scheduleReconnect()
-    end
-  end)
-  
-  state.ws:SetClosedByRemoteFunction(function(websocket)
-    log("WebSocket closed by remote")
-    if not state.shuttingDown then
-      scheduleReconnect()
+
+  state.webSocket:SetOfflineFunction(function(_)
+    logInfo("WebSocket offline")
+    if not state.isShuttingDown then
+      scheduleWebSocketReconnect()
     end
   end)
 
-  state.ws:Start()
+  state.webSocket:SetClosedByRemoteFunction(function(_)
+    logInfo("WebSocket closed by remote")
+    if not state.isShuttingDown then
+      scheduleWebSocketReconnect()
+    end
+  end)
+
+  state.webSocket:Start()
 end
 
-----------------------------------------
--- PROGRAM BUTTONS
-----------------------------------------
-local function executeProgramButton(propertyName)
-  if not Properties then return end
-  
-  local action = Properties[propertyName]
-  if not action or action == "" or action == "No Operation" then return end
-
-  local actionMap = {
-    ["Show Codec Info"] = "codecinfo",
-    ["Show OSD"] = "osd",
-    ["Show Player Process Info"] = "playerprocessinfo",
-    ["Toggle Subtitles"] = "showsubtitles",
-    ["Next Subtitle"] = "nextsubtitle",
-    ["Next Audio Track"] = "audionextlanguage",
-    ["Screenshot"] = "screenshot",
-  }
-
-  local mappedAction = actionMap[action]
-  if mappedAction then
-    execAction(mappedAction)
-  end
-end
-
-
-----------------------------------------
--- COMMAND HANDLERS
-----------------------------------------
-local commands = {}
-
-commands.UP = function()
-  if shouldUsePlaybackDirectionals() then 
-    execAction("bigstepforward") 
-  else 
-    sendInput("Up") 
-  end
-end
-
-commands.DOWN = function()
-  if shouldUsePlaybackDirectionals() then 
-    execAction("bigstepback") 
-  else 
-    sendInput("Down") 
-  end
-end
-
-commands.LEFT = function()
-  if shouldUsePlaybackDirectionals() then 
-    execAction("stepback") 
-  else 
-    sendInput("Left") 
-  end
-end
-
-commands.RIGHT = function()
-  if shouldUsePlaybackDirectionals() then 
-    execAction("stepforward") 
-  else 
-    sendInput("Right") 
-  end
-end
-
-commands.ENTER = function()
-  if shouldUsePlaybackDirectionals() then 
-    execAction("playpause") 
-  else 
-    sendInput("Select") 
-  end
-end
-
-commands.CANCEL = function() sendInput("Back") end
-commands.MENU = function() sendInput("ContextMenu") end
-commands.INFO = function() sendInput("Info") end
-
-commands.ON = function()
-  C4:SendToProxy(BINDING_ID, "ON", {})
-  sendInput("Home")
-end
-
-commands.PLAY = function()
-  C4:SendToProxy(BINDING_ID, "ON", {})
-  execAction("play")
-end
-
-commands.PAUSE = function() execAction("pause") end
-commands.STOP = function() execAction("stop") end
-
-commands.SKIP_FWD = function()
-  local skipSecs = getSkipInterval()
-  local action = (skipSecs >= 600) and "bigstepforward" 
-              or (skipSecs >= 30) and "stepforward" 
-              or "smallstepforward"
-  execAction(action)
-end
-
-commands.SKIP_REV = function()
-  local skipSecs = getSkipInterval()
-  local action = (skipSecs >= 600) and "bigstepback" 
-              or (skipSecs >= 30) and "stepback" 
-              or "smallstepback"
-  execAction(action)
-end
-
-commands.SCAN_FWD = function() execAction("fastforward") end
-commands.SCAN_REV = function() execAction("rewind") end
-
-commands.PROGRAM_A = function() executeProgramButton("Program A Button (Red)") end
-commands.PROGRAM_B = function() executeProgramButton("Program B Button (Green)") end
-commands.PROGRAM_C = function() executeProgramButton("Program C Button (Yellow)") end
-commands.PROGRAM_D = function() executeProgramButton("Program D Button (Blue)") end
-
-----------------------------------------
--- CONTROL4 CALLBACKS
-----------------------------------------
 function ReceivedFromProxy(bindingID, command, params)
-  if bindingID == BINDING_ID and commands[command] then
-    dlog("Command: " .. command)
-    commands[command]()
+  if bindingID == MEDIA_PLAYER_BINDING_ID and commandHandlers[command] then
+    logDebug("Command: " .. command)
+    commandHandlers[command]()
   end
 end
 
 function OnDriverInit()
-  log("Driver initialized")
-  state.shuttingDown = false
-  loadPlaybackDirectionalMode()
-  connectWebSocket()
+  logInfo("Driver initialized")
+  state.isShuttingDown = false
+  loadDirectionalsModeFromProperties()
+  connectKodiWebSocket()
 end
 
 function OnDriverDestroyed()
-  log("Driver shutting down")
-  state.shuttingDown = true
-  
-  state.reconnectTimer = cancelTimer(state.reconnectTimer)
-  state.mediaInfoTimer = cancelTimer(state.mediaInfoTimer)
-  
-  if state.ws then
-    state.ws:Close()
-    state.ws = nil
+  logInfo("Driver shutting down")
+  state.isShuttingDown = true
+  state.reconnectTimerId = cancelTimer(state.reconnectTimerId)
+  avDetails:clear()
+
+  if state.webSocket then
+    state.webSocket:Close()
+    state.webSocket = nil
   end
+
+  kodiRpc:setWebSocket(nil)
+  kodiRpc:clearPendingCallbacks()
 end
 
-function OnPropertyChanged(property)
-  dlog("Property changed: " .. property)
-  
-  if property == "Playback Directionals" then
-    loadPlaybackDirectionalMode()
-    
-  elseif property == "IP Address" then
-    log("IP address changed, reconnecting")
+function OnPropertyChanged(propertyName)
+  logDebug("Property changed: " .. propertyName)
+
+  if propertyName == "Playback Directionals" then
+    loadDirectionalsModeFromProperties()
+
+  elseif propertyName == "IP Address" then
+    logInfo("IP address changed, reconnecting")
     OnDriverDestroyed()
-    state.shuttingDown = false
+    state.isShuttingDown = false
     C4:SetTimer(1000, OnDriverInit)
   end
 end
