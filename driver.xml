@@ -5,8 +5,8 @@
   <name>Kodi IP Control</name>
   <model>Kodi v21+</model>
   <created>12/28/2025 12:00 PM</created>
-  <modified>1/15/2025 1:44 PM</modified>
-  <version>18</version>
+  <modified>01/15/2025 4:44 PM</modified>
+  <version>19</version>
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
@@ -56,10 +56,9 @@
 
     1. On your Kodi device, go to: Settings &gt; Services &gt; Control
     2. Enable: "Allow remote control via HTTP"
-    3. Set Port to: 8080 (or your preferred port)
-    4. Enable: "Allow remote control from applications on this system"
-    5. Enable: "Allow remote control from applications on other systems"
-    6. Leave username and password blank (or configure authentication if needed)
+    3. Enable: "Allow remote control from applications on this system"
+    4. Enable: "Allow remote control from applications on other systems"
+    5. Leave username and password blank (or configure authentication if needed)
 
     ======================================
     DRIVER CONFIGURATION
@@ -68,9 +67,6 @@
     IP Address:
       Enter the IP address of your Kodi device. 
       Recommended: Set a static IP or DHCP reservation for your Kodi device.
-
-    Port:
-      The HTTP port configured in Kodi (default: 8080)
 
     Skip Interval (seconds):
       How many seconds to skip forward or backward when using the skip buttons.
@@ -109,7 +105,7 @@
       by visiting http://[IP]:8080 in a browser
     - Enable Debug Mode and check Lua Output in Composer Pro for errors
     - Ensure your Control4 controller can reach the Kodi device's IP
-    - Verify no firewall is blocking port 8080 on the Kodi device
+    - Verify no firewall is blocking port 9090 on the Kodi device
 
     ======================================
     VERSION HISTORY
@@ -125,11 +121,6 @@
         <name>IP Address</name>
         <type>STRING</type>
         <default>192.168.1.100</default>
-      </property>
-      <property>
-        <name>Port</name>
-        <type>STRING</type>
-        <default>8080</default>
       </property>
       <property>
         <name>Skip Interval (seconds)</name>
