@@ -6,7 +6,7 @@
   <model>Kodi v21+</model>
   <created>12/28/2024 12:00 PM</created>
   <modified>01/15/2026 9:30 PM</modified>
-  <version>21</version>
+  <version>22</version>
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
@@ -61,7 +61,7 @@ This driver provides IP control for Kodi v21+ (Omega) using WebSocket JSON-RPC.
 
 - Real-time playback state monitoring via WebSocket
 - Full media player control (play, pause, stop, seek)
-- Directional navigation
+- Directional navigation (option to select PM4K or Kodi style)
 - Configurable program buttons for OSD, subtitles, codec info, etc.
 - Automatic player ID detection
 
@@ -71,12 +71,22 @@ This driver provides IP control for Kodi v21+ (Omega) using WebSocket JSON-RPC.
 - Player ID is automatically detected from Kodi events
 - No polling required - event-driven updates
     </documentation>
-    <script file="driver.lua"/>
+    <script file="driver.lua" />
     <properties>
       <property>
         <name>IP Address</name>
         <type>STRING</type>
         <default></default>
+      </property>
+      <property>
+        <name>Playback Directionals</name>
+        <type>LIST</type>
+        <readonly>false</readonly>
+        <default>PM4K</default>
+        <items>
+          <item>PM4K</item>
+          <item>Kodi</item>
+        </items>
       </property>
       <property>
         <name>Skip Interval (seconds)</name>
@@ -163,16 +173,10 @@ This driver provides IP control for Kodi v21+ (Omega) using WebSocket JSON-RPC.
         <default>-</default>
       </property>
       <property>
-        <name>Video Resolution</name>
+        <name>Media Info</name>
         <type>STRING</type>
         <readonly>true</readonly>
-        <default>-</default>
-      </property>
-      <property>
-        <name>Video Aspect Ratio</name>
-        <type>STRING</type>
-        <readonly>true</readonly>
-        <default>-</default>
+        <default>N/A</default>
       </property>
     </properties>
   </config>
