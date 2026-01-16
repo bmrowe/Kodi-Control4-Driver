@@ -70,6 +70,14 @@ local function cancelTimer(timerRef)
   return nil
 end
 
+local function isAutoRoomOnEnabled()
+  return Properties and Properties["Auto Room On"] == "ON"
+end
+
+local function isAutoRoomOffEnabled()
+  return Properties and Properties["Auto Room Off"] == "ON"
+end
+
 ----------------------------------------
 -- JSON-RPC
 ----------------------------------------
@@ -200,14 +208,19 @@ local function requestMediaInfo()
       if ach ~= "" then audio = audio .. " " .. ach .. "ch" end
       if alang ~= "" then audio = audio .. " " .. alang end
       
-      local info = resolution .. " | " .. aspect .. " | " .. vcodec .. " " .. hdr .. " | " .. audio
-      updateProperty("Media Info", info)
-      dlog("Media Info: " .. info)
+      local videoDetails = resolution .. " | " .. aspect .. " | " .. vcodec .. " " .. hdr
+      local audioDetails = audio
+      
+      updateProperty("Video Details", videoDetails)
+      updateProperty("Audio Details", audioDetails)
+      dlog("Video Details: " .. videoDetails)
+      dlog("Audio Details: " .. audioDetails)
     else
       dlog("GetInfoLabels returned invalid data")
     end
   end)
 end
+
 
 -- Debounced version to prevent spam from multiple OnAVChange events
 local function scheduleMediaInfoUpdate()
@@ -224,10 +237,16 @@ end
 local function handleNotification(method, data)
   if method == "Player.OnPlay" then
     dlog("Player.OnPlay notification")
+    local wasInPlayback = state.inPlayback
     state.inPlayback = true
     updateProperty("Player State", "Playing")
     if data and data.item and data.item.type then
       updateProperty("Media Type", data.item.type)
+    end
+
+    if not wasInPlayback and isAutoRoomOnEnabled() then
+      dlog("Auto Room On: sending ON to proxy")
+      C4:SendToProxy(BINDING_ID, "ON", {})
     end
 
   elseif method == "Player.OnPause" then
@@ -242,11 +261,18 @@ local function handleNotification(method, data)
 
   elseif method == "Player.OnStop" then
     dlog("Player.OnStop notification")
+    local wasInPlayback = state.inPlayback
     state.inPlayback = false
     state.mediaInfoTimer = cancelTimer(state.mediaInfoTimer)
     updateProperty("Player State", "Stopped")
     updateProperty("Media Type", "-")
-    updateProperty("Media Info", "N/A")
+    updateProperty("Video Details", "N/A")
+    updateProperty("Audio Details", "N/A")
+
+    if wasInPlayback and isAutoRoomOffEnabled() then
+      dlog("Auto Room Off: sending OFF to proxy")
+      C4:SendToProxy(BINDING_ID, "OFF", {})
+    end
 
   elseif method == "Player.OnSpeedChanged" then
     dlog("Player.OnSpeedChanged notification")
@@ -265,6 +291,7 @@ local function handleNotification(method, data)
     scheduleMediaInfoUpdate()
   end
 end
+
 
 local function processMessage(websocket, data)
   dlog("Message received")
@@ -371,7 +398,7 @@ local function executeProgramButton(propertyName)
   if not Properties then return end
   
   local action = Properties[propertyName]
-  if not action or action == "" then return end
+  if not action or action == "" or action == "No Operation" then return end
 
   local actionMap = {
     ["Show Codec Info"] = "codecinfo",
@@ -388,6 +415,7 @@ local function executeProgramButton(propertyName)
     execAction(mappedAction)
   end
 end
+
 
 ----------------------------------------
 -- COMMAND HANDLERS
