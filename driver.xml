@@ -1,12 +1,12 @@
 <devicedata>
-  <copyright>Bryan Rowe 2025</copyright>
+  <copyright>Copyright 2024 Bryan Rowe. All rights reserved.</copyright>
   <creator>Bryan Rowe</creator>
   <manufacturer>Bryan Rowe</manufacturer>
   <name>Kodi IP Control</name>
   <model>Kodi v21+</model>
-  <created>12/28/2025 12:00 PM</created>
-  <modified>01/15/2025 4:44 PM</modified>
-  <version>19</version>
+  <created>12/28/2024 12:00 PM</created>
+  <modified>01/15/2026 9:30 PM</modified>
+  <version>21</version>
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
@@ -22,7 +22,7 @@
     <connection>
       <id>5001</id>
       <type>2</type>
-      <connectionname>Control4 UI</connectionname>
+      <connectionname>Media Player</connectionname>
       <consumer>False</consumer>
       <linelevel>False</linelevel>
       <classes>
@@ -34,7 +34,7 @@
     <connection>
       <id>2000</id>
       <type>5</type>
-      <connectionname>AV Out</connectionname>
+      <connectionname>HDMI</connectionname>
       <consumer>False</consumer>
       <linelevel>True</linelevel>
       <classes>
@@ -46,81 +46,37 @@
   </connections>
   <config>
     <documentation>
-    Kodi IP Control Driver
+# Kodi Control4 Driver
 
-    ======================================
-    KODI SETUP REQUIREMENTS
-    ======================================
+This driver provides IP control for Kodi v21+ (Omega) using WebSocket JSON-RPC.
 
-    Before using this driver, configure Kodi to accept remote control commands:
+## Setup
 
-    1. On your Kodi device, go to: Settings &gt; Services &gt; Control
-    2. Enable: "Allow remote control via HTTP"
-    3. Enable: "Allow remote control from applications on this system"
-    4. Enable: "Allow remote control from applications on other systems"
-    5. Leave username and password blank (or configure authentication if needed)
+1. In Kodi, go to Settings → Services → Control
+2. Enable "Allow remote control via HTTP"
+3. Enable "Allow remote control from applications on other systems"
+4. In Control4 Composer, enter your Kodi device's IP address
 
-    ======================================
-    DRIVER CONFIGURATION
-    ======================================
+## Features
 
-    IP Address:
-      Enter the IP address of your Kodi device. 
-      Recommended: Set a static IP or DHCP reservation for your Kodi device.
+- Real-time playback state monitoring via WebSocket
+- Full media player control (play, pause, stop, seek)
+- Directional navigation
+- Configurable program buttons for OSD, subtitles, codec info, etc.
+- Automatic player ID detection
 
-    Skip Interval (seconds):
-      How many seconds to skip forward or backward when using the skip buttons.
-      Default: 30 seconds. Range: 5-600 seconds.
+## Notes
 
-    Program Buttons A/B/C/D (Red/Green/Yellow/Blue):
-      Configure what each colored button does:
-      - Show Codec Info: Display video/audio codec information
-      - Show OSD: Toggle on-screen display
-      - Show Player Process Info: Display detailed playback information
-      - Toggle Subtitles: Turn subtitles on/off
-      - Next Subtitle: Switch to next subtitle track
-      - Next Audio Track: Switch to next audio track
-      - Screenshot: Take a screenshot
-
-    Debug Mode:
-      Enable to see detailed logging in Composer Pro's Lua Output window.
-      Useful for troubleshooting. Remember to turn off after debugging.
-
-    ======================================
-    FEATURES
-    ======================================
-
-    - Navigation: Up, Down, Left, Right, Enter, Cancel (Back), Menu, Info
-    - Playback: Play, Pause, Stop
-    - Skip: Skip forward/backward by configurable interval
-    - Scan: Fast forward (2x) and rewind (-2x)
-    - Auto Room On: Automatically turns room on when Play is pressed
-    - Programmable Buttons: Four customizable buttons for quick access
-
-    ======================================
-    TROUBLESHOOTING
-    ======================================
-
-    - If commands don't work, verify Kodi's web interface is accessible 
-      by visiting http://[IP]:8080 in a browser
-    - Enable Debug Mode and check Lua Output in Composer Pro for errors
-    - Ensure your Control4 controller can reach the Kodi device's IP
-    - Verify no firewall is blocking port 9090 on the Kodi device
-
-    ======================================
-    VERSION HISTORY
-    ======================================
-
-    Version 16: Fixed documentation location and formatting
-    Version 15: Added configurable Program buttons (A/B/C/D)
-    Version 14: Added documentation
-    Version 13: Added configurable skip interval
+- WebSocket connects on port 9090 (Kodi default)
+- Player ID is automatically detected from Kodi events
+- No polling required - event-driven updates
     </documentation>
+    <script file="driver.lua"/>
     <properties>
       <property>
         <name>IP Address</name>
         <type>STRING</type>
-        <default>192.168.1.100</default>
+        <default></default>
       </property>
       <property>
         <name>Skip Interval (seconds)</name>
@@ -134,7 +90,6 @@
         <type>LIST</type>
         <default>Show Codec Info</default>
         <items>
-          <item>None</item>
           <item>Show Codec Info</item>
           <item>Show OSD</item>
           <item>Show Player Process Info</item>
@@ -149,7 +104,6 @@
         <type>LIST</type>
         <default>Toggle Subtitles</default>
         <items>
-          <item>None</item>
           <item>Show Codec Info</item>
           <item>Show OSD</item>
           <item>Show Player Process Info</item>
@@ -164,7 +118,6 @@
         <type>LIST</type>
         <default>Next Audio Track</default>
         <items>
-          <item>None</item>
           <item>Show Codec Info</item>
           <item>Show OSD</item>
           <item>Show Player Process Info</item>
@@ -179,7 +132,6 @@
         <type>LIST</type>
         <default>Screenshot</default>
         <items>
-          <item>None</item>
           <item>Show Codec Info</item>
           <item>Show OSD</item>
           <item>Show Player Process Info</item>
@@ -199,22 +151,6 @@
         </items>
       </property>
       <property>
-        <name>Enable Polling</name>
-        <type>LIST</type>
-        <default>OFF</default>
-        <items>
-          <item>OFF</item>
-          <item>ON</item>
-        </items>
-      </property>
-      <property>
-        <name>Poll Interval (seconds)</name>
-        <type>RANGED_INTEGER</type>
-        <minimum>1</minimum>
-        <maximum>60</maximum>
-        <default>5</default>
-      </property>
-      <property>
         <name>Player State</name>
         <type>STRING</type>
         <readonly>true</readonly>
@@ -225,12 +161,6 @@
         <type>STRING</type>
         <readonly>true</readonly>
         <default>-</default>
-      </property>
-      <property>
-        <name>Screen Saver</name>
-        <type>STRING</type>
-        <readonly>true</readonly>
-        <default>Inactive</default>
       </property>
       <property>
         <name>Video Resolution</name>
@@ -244,37 +174,6 @@
         <readonly>true</readonly>
         <default>-</default>
       </property>
-      <property>
-        <name>CPU Usage</name>
-        <type>STRING</type>
-        <readonly>true</readonly>
-        <default>-</default>
-      </property>
-      <property>
-        <name>Memory Usage</name>
-        <type>STRING</type>
-        <readonly>true</readonly>
-        <default>-</default>
-      </property>
-      <property>
-        <name>System Temperature</name>
-        <type>STRING</type>
-        <readonly>true</readonly>
-        <default>-</default>
-      </property>
-      <property>
-        <name>System Uptime</name>
-        <type>STRING</type>
-        <readonly>true</readonly>
-        <default>-</default>
-      </property>
-      <property>
-        <name>Kodi Version</name>
-        <type>STRING</type>
-        <readonly>true</readonly>
-        <default>-</default>
-      </property>
     </properties>
-    <script file="driver.lua"></script>
   </config>
 </devicedata>

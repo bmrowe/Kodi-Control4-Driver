@@ -1,27 +1,33 @@
-local pollTimer = nil
-
--- Constants
+--------------------------------------------------------------------------------
+-- CONSTANTS
+--------------------------------------------------------------------------------
 local BINDING_ID = 5001
-local VIDEO_PLAYER_ID = 1
+local WS_PORT = 9090
 local DEFAULT_SKIP_SECONDS = 30
-local DEFAULT_POLL_INTERVAL = 5
-local HTTP_TIMEOUT_MS = 5000  -- 5 second timeout
+local RECONNECT_DELAY_MS = 5000
+local INIT_DELAY_MS = 1000
+local CALLBACK_TIMEOUT_MS = 10000
 
--- Utility Functions
-local function isDebugMode()
-  return Properties["Debug Mode"] == "ON"
-end
+--------------------------------------------------------------------------------
+-- STATE
+--------------------------------------------------------------------------------
+local state = {
+  ws = nil,
+  currentPlayerId = 0,
+  reconnectTimer = nil,
+}
 
+--------------------------------------------------------------------------------
+-- UTILITIES
+--------------------------------------------------------------------------------
 local function debugLog(message)
-  if isDebugMode() then
+  if Properties["Debug Mode"] == "ON" then
     print("Kodi: " .. message)
   end
 end
 
-local function debugLogJson(message, data)
-  if isDebugMode() then
-    print("Kodi: " .. message .. ": " .. C4:JsonEncode(data or {}))
-  end
+local function log(message)
+  print("Kodi: " .. message)
 end
 
 local function updateProperty(name, value)
@@ -33,301 +39,273 @@ local function clearPlayerProperties()
   updateProperty("Media Type", "-")
   updateProperty("Video Resolution", "-")
   updateProperty("Video Aspect Ratio", "-")
-end
-
--- HTTP Request Functions
-local function sendHttpRequest(url, jsonData, callback)
-  local headers = {["Content-Type"] = "application/json"}
-  
-  C4:url()
-    :SetOptions({
-      timeout = HTTP_TIMEOUT_MS,
-      connect_timeout = 3000  -- 3 second connection timeout
-    })
-    :OnDone(function(transfer, responses, errCode, errMsg)
-      if errCode ~= 0 then
-        if errCode == -1 then
-          debugLog("HTTP timeout - Kodi not responding")
-        else
-          debugLog("HTTP error " .. tostring(errCode) .. ": " .. tostring(errMsg))
-        end
-        if callback then callback(nil) end
-      else
-        if callback and responses[1] and responses[1].body then
-          local response = C4:JsonDecode(responses[1].body)
-          callback(response)
-        elseif callback then
-          callback(nil)
-        end
-      end
-    end)
-    :Post(url, jsonData, headers)
-end
-
-local function buildKodiUrl()
-  local ip = Properties["IP Address"]
-  local port = Properties["Port"] or "8080"
-  
-  if not ip or ip == "" then
-    print("Kodi: No IP address configured")
-    return nil
-  end
-  
-  return "http://" .. ip .. ":" .. port .. "/jsonrpc"
-end
-
-function SendKodiCommand(method, params, callback)
-  local url = buildKodiUrl()
-  if not url then return end
-  
-  local jsonRequest = {
-    jsonrpc = "2.0",
-    method = method,
-    params = params or {},
-    id = 1
-  }
-  
-  debugLog(method)
-  sendHttpRequest(url, C4:JsonEncode(jsonRequest), callback)
-end
-
-function SendKodiCommandRaw(jsonString, callback)
-  local url = buildKodiUrl()
-  if not url then return end
-  
-  sendHttpRequest(url, jsonString, callback)
-end
-
--- Batched JSON-RPC call
-local function sendBatchRequest(requests, callback)
-  local url = buildKodiUrl()
-  if not url then return end
-  
-  debugLog("Sending batch request with " .. #requests .. " commands")
-  sendHttpRequest(url, C4:JsonEncode(requests), callback)
-end
-
--- Polling Functions
-local function processPlayerState(speed)
-  if speed == 0 then
-    updateProperty("Player State", "Paused")
-  elseif speed == 1 then
-    updateProperty("Player State", "Playing")
-  else
-    updateProperty("Player State", "Fast Forward/Rewind")
-  end
-end
-
-local function processVideoStreams(videostreams)
-  if videostreams and #videostreams > 0 then
-    local video = videostreams[1]
-    if video.width and video.height then
-      updateProperty("Video Resolution", video.width .. "x" .. video.height)
-      local aspect = video.width / video.height
-      updateProperty("Video Aspect Ratio", string.format("%.2f", aspect))
-    end
-  end
-end
-
-local function pollPlayerProperties(playerid)
-  local query = string.format(
-    '{"jsonrpc":"2.0","method":"Player.GetProperties","params":{"playerid":%d,"properties":["speed","percentage","time","totaltime","videostreams","audiostreams"]},"id":1}',
-    playerid
-  )
-  
-  SendKodiCommandRaw(query, function(response)
-    debugLogJson("GetProperties response", response)
-    
-    if response and response.result then
-      processPlayerState(response.result.speed)
-      processVideoStreams(response.result.videostreams)
-    end
-  end)
-end
-
-local function processSystemLabels(labels)
-  if labels["System.ScreenSaverActive"] then
-    updateProperty("Screen Saver", labels["System.ScreenSaverActive"] == "true" and "Active" or "Inactive")
-  end
-  
-  if labels["System.CpuUsage"] then
-    updateProperty("CPU Usage", labels["System.CpuUsage"])
-  end
-  
-  if labels["System.FreeMemory"] then
-    updateProperty("Memory Usage", labels["System.FreeMemory"])
-  end
-  
-  if labels["System.CPUTemperature"] then
-    updateProperty("System Temperature", labels["System.CPUTemperature"])
-  end
-  
-  if labels["System.Uptime(hh:mm)"] and labels["System.Uptime(hh:mm)"] ~= "Busy" then
-    updateProperty("System Uptime", labels["System.Uptime(hh:mm)"])
-  else
-    updateProperty("System Uptime", "-")
-  end
-  
-  if labels["System.BuildVersion"] then
-    updateProperty("Kodi Version", labels["System.BuildVersion"])
-  end
-end
-
-function PollKodiStatus()
-  -- Batch request: Get active players + system info in ONE HTTP call
-  local batchRequests = {
-    {
-      jsonrpc = "2.0",
-      method = "Player.GetActivePlayers",
-      params = {},
-      id = 1
-    },
-    {
-      jsonrpc = "2.0",
-      method = "XBMC.GetInfoLabels",
-      params = {
-        labels = {
-          "System.ScreenSaverActive",
-          "System.CpuUsage",
-          "System.FreeMemory",
-          "System.CPUTemperature",
-          "System.Uptime(hh:mm)",
-          "System.BuildVersion"
-        }
-      },
-      id = 2
-    }
-  }
-  
-  sendBatchRequest(batchRequests, function(responses)
-    if not responses then return end
-    
-    debugLogJson("Batch response", responses)
-    
-    -- Process GetActivePlayers (id=1)
-    local playerResponse = nil
-    local systemResponse = nil
-    
-    for _, response in ipairs(responses) do
-      if response.id == 1 then
-        playerResponse = response
-      elseif response.id == 2 then
-        systemResponse = response
-      end
-    end
-    
-    -- Handle player status
-    if playerResponse and playerResponse.result and #playerResponse.result > 0 then
-      local playerid = playerResponse.result[1].playerid
-      local playertype = playerResponse.result[1].type
-      
-      debugLog("Active player found - ID: " .. playerid .. ", Type: " .. playertype)
-      
-      updateProperty("Media Type", playertype or "-")
-      pollPlayerProperties(playerid)  -- This still needs a separate call
-    else
-      debugLog("No active players found")
-      clearPlayerProperties()
-    end
-    
-    -- Handle system info
-    if systemResponse and systemResponse.result then
-      processSystemLabels(systemResponse.result)
-    end
-  end)
-end
-
-function StartPolling()
-  StopPolling()
-  local interval = tonumber(Properties["Poll Interval (seconds)"]) or DEFAULT_POLL_INTERVAL
-  pollTimer = C4:SetTimer(interval * 1000, function()
-    PollKodiStatus()
-  end, true)
-  print("Kodi: Polling started (every " .. interval .. " seconds)")
-end
-
-function StopPolling()
-  if pollTimer then
-    pollTimer:Cancel()
-    pollTimer = nil
-    print("Kodi: Polling stopped")
-  end
-end
-
--- Program Button Functions
-local function executeAction(action)
-  SendKodiCommand("Input.ExecuteAction", {action = action})
-end
-
-local function setPlayerSubtitle(mode)
-  SendKodiCommand("Player.SetSubtitle", {playerid = VIDEO_PLAYER_ID, subtitle = mode})
-end
-
-local function setPlayerAudioStream(stream)
-  SendKodiCommand("Player.SetAudioStream", {playerid = VIDEO_PLAYER_ID, stream = stream})
-end
-
-function ExecuteProgramButton(action)
-  local actions = {
-    ["Show Codec Info"] = function() executeAction("codecinfo") end,
-    ["Show OSD"] = function() executeAction("osd") end,
-    ["Show Player Process Info"] = function() executeAction("playerprocessinfo") end,
-    ["Toggle Subtitles"] = function() setPlayerSubtitle("toggle") end,
-    ["Next Subtitle"] = function() setPlayerSubtitle("next") end,
-    ["Next Audio Track"] = function() setPlayerAudioStream("next") end,
-    ["Screenshot"] = function() executeAction("screenshot") end
-  }
-  
-  local actionFunc = actions[action]
-  if actionFunc then
-    actionFunc()
-  end
-end
-
--- Player Control Functions
-local function playPause(play)
-  SendKodiCommand("Player.PlayPause", {playerid = VIDEO_PLAYER_ID, play = play})
-end
-
-local function stopPlayer()
-  SendKodiCommand("Player.Stop", {playerid = VIDEO_PLAYER_ID})
-end
-
-local function seekPlayer(seconds)
-  SendKodiCommand("Player.Seek", {playerid = VIDEO_PLAYER_ID, value = {seconds = seconds}})
-end
-
-local function setPlayerSpeed(speed)
-  SendKodiCommand("Player.SetSpeed", {playerid = VIDEO_PLAYER_ID, speed = speed})
+  state.currentPlayerId = 0
 end
 
 local function getSkipInterval()
   return tonumber(Properties["Skip Interval (seconds)"]) or DEFAULT_SKIP_SECONDS
 end
 
--- Navigation Functions
-local function sendInput(command)
-  SendKodiCommand("Input." .. command, {})
+local function getPlayerId()
+  return state.currentPlayerId > 0 and state.currentPlayerId or 0
 end
 
--- Command Dispatcher
+--------------------------------------------------------------------------------
+-- WEBSOCKET CLASS
+--------------------------------------------------------------------------------
+local WebSocket = require("drivers-common-public.module.websocket")
+
+local KodiWebSocket = (function(baseClass)
+  local class = {}
+  class.__index = class
+  
+  function class:OnMessage(message)
+    local success, response = pcall(function() return C4:JsonDecode(message) end)
+    
+    if not (success and response and type(response) == "table") then
+      return
+    end
+    
+    debugLog("Received: " .. message)
+    
+    -- Handle RPC responses
+    if response.id and self.callbacks[response.id] then
+      local callback = self.callbacks[response.id]
+      self.callbacks[response.id] = nil
+      if callback and response.result then
+        callback(response.result)
+      end
+    end
+    
+    -- Handle notifications
+    if response.method and response.params then
+      self:handleNotification(response.method, response.params.data)
+    end
+  end
+  
+  function class:handleNotification(method, data)
+    local handlers = {
+      ["Player.OnPlay"] = function()
+        log("Player.OnPlay")
+        if data and data.player and data.player.playerid then
+          state.currentPlayerId = data.player.playerid
+        end
+        if data and data.item and data.item.type then
+          updateProperty("Media Type", data.item.type)
+        end
+        updateProperty("Player State", "Playing")
+      end,
+      
+      ["Player.OnPause"] = function()
+        log("Player.OnPause")
+        if data and data.player and data.player.playerid then
+          state.currentPlayerId = data.player.playerid
+        end
+        updateProperty("Player State", "Paused")
+      end,
+      
+      ["Player.OnResume"] = function()
+        log("Player.OnResume")
+        updateProperty("Player State", "Playing")
+      end,
+      
+      ["Player.OnStop"] = function()
+        log("Player.OnStop")
+        clearPlayerProperties()
+      end,
+      
+      ["Player.OnSpeedChanged"] = function()
+        if not (data and data.player and data.player.speed) then
+          return
+        end
+        
+        local stateMap = {
+          [0] = "Paused",
+          [1] = "Playing",
+        }
+        
+        local playerState = stateMap[data.player.speed] or "Fast Forward/Rewind"
+        updateProperty("Player State", playerState)
+      end,
+    }
+    
+    local handler = handlers[method]
+    if handler then
+      handler()
+    end
+  end
+  
+  function class:sendCommand(method, params, callback)
+    -- #3: Command Validation - check if connected
+    if not self.running then
+      log("Cannot send " .. method .. " - not connected")
+      return false
+    end
+    
+    self.rpcId = (self.rpcId % 25) + 1
+    
+    local request = {
+      jsonrpc = "2.0",
+      method = method,
+      params = params or {},
+      id = self.rpcId
+    }
+    
+    if callback then
+      self.callbacks[self.rpcId] = callback
+      
+      -- #4: Callback Timeout - auto-clean after 10 seconds
+      local callbackId = self.rpcId
+      C4:SetTimer(CALLBACK_TIMEOUT_MS, function()
+        if self.callbacks[callbackId] then
+          debugLog("Callback timeout for " .. method)
+          self.callbacks[callbackId] = nil
+        end
+      end)
+    end
+    
+    debugLog("Sending: " .. method)
+    self:Send(C4:JsonEncode(request))
+    return true
+  end
+  
+  local mt = {
+    __call = function(self, url)
+      local instance = baseClass:new(url)
+      instance.rpcId = 0
+      instance.callbacks = {}
+      
+      setmetatable(instance, class)
+      return instance
+    end,
+    
+    __index = baseClass
+  }
+  
+  setmetatable(class, mt)
+  return class
+end)(WebSocket)
+
+--------------------------------------------------------------------------------
+-- CONNECTION MANAGEMENT
+--------------------------------------------------------------------------------
+local function cancelReconnect()
+  if state.reconnectTimer then
+    C4:KillTimer(state.reconnectTimer)
+    state.reconnectTimer = nil
+  end
+end
+
+local function scheduleReconnect()
+  cancelReconnect()
+  
+  -- #2: Automatic Reconnection
+  state.reconnectTimer = C4:SetTimer(RECONNECT_DELAY_MS, function()
+    log("Attempting reconnect...")
+    connectWebSocket()
+  end)
+end
+
+function connectWebSocket()
+  local ip = Properties["IP Address"]
+  if not ip or ip == "" then
+    log("No IP address configured")
+    return
+  end
+  
+  local url = "ws://" .. ip .. ":" .. WS_PORT .. "/jsonrpc"
+  log("Connecting to: " .. url)
+  
+  state.ws = KodiWebSocket(url)
+  
+  state.ws.OnOpen = function(self)
+    log("WebSocket connected")
+    cancelReconnect()
+    
+    self:sendCommand("Player.GetActivePlayers", {}, function(result)
+      if result and #result > 0 then
+        state.currentPlayerId = result[1].playerid
+        log("Active player ID: " .. state.currentPlayerId)
+        updateProperty("Media Type", result[1].type or "-")
+        updateProperty("Player State", "Playing")
+      else
+        log("No active players")
+      end
+    end)
+  end
+  
+  state.ws.OnClose = function(self)
+    log("WebSocket closed")
+    
+    -- #1: Memory Leak Prevention - clean up all callbacks
+    self.callbacks = {}
+    
+    clearPlayerProperties()
+    scheduleReconnect()
+  end
+  
+  state.ws.OnError = function(self, err)
+    log("WebSocket error: " .. tostring(err))
+  end
+  
+  state.ws:Start()
+end
+
+local function disconnectWebSocket()
+  cancelReconnect()
+  
+  if state.ws then
+    state.ws:Close()
+    state.ws = nil
+  end
+end
+
+local function reconnectWebSocket()
+  disconnectWebSocket()
+  C4:SetTimer(INIT_DELAY_MS, function()
+    connectWebSocket()
+  end)
+end
+
+--------------------------------------------------------------------------------
+-- COMMAND HANDLERS
+--------------------------------------------------------------------------------
+local function sendInput(input)
+  return state.ws:sendCommand("Input." .. input, {})
+end
+
+local function sendAction(action)
+  return state.ws:sendCommand("Input.ExecuteAction", {action = action})
+end
+
+local function executeProgramButton(propertyName)
+  local action = Properties[propertyName]
+  if not action then return end
+  
+  local actionMap = {
+    ["Show Codec Info"] = function() sendAction("codecinfo") end,
+    ["Show OSD"] = function() sendAction("osd") end,
+    ["Show Player Process Info"] = function() sendAction("playerprocessinfo") end,
+    ["Toggle Subtitles"] = function()
+      state.ws:sendCommand("Player.SetSubtitle", {playerid = getPlayerId(), subtitle = "toggle"})
+    end,
+    ["Next Subtitle"] = function()
+      state.ws:sendCommand("Player.SetSubtitle", {playerid = getPlayerId(), subtitle = "next"})
+    end,
+    ["Next Audio Track"] = function()
+      state.ws:sendCommand("Player.SetAudioStream", {playerid = getPlayerId(), stream = "next"})
+    end,
+    ["Screenshot"] = function() sendAction("screenshot") end,
+  }
+  
+  local handler = actionMap[action]
+  if handler then
+    handler()
+  end
+end
+
 local commandHandlers = {
-  ON = function() sendInput("Home") end,
-  OFF = function() SendKodiCommand("System.Hibernate", {}) end,
-  PLAY = function()
-    C4:SendToProxy(BINDING_ID, "ON", {})
-    playPause(true)
-  end,
-  PAUSE = function() playPause(false) end,
-  STOP = function() stopPlayer() end,
-  SKIP_FWD = function() seekPlayer(getSkipInterval()) end,
-  SKIP_REV = function() seekPlayer(-getSkipInterval()) end,
-  SCAN_FWD = function() setPlayerSpeed(2) end,
-  SCAN_REV = function() setPlayerSpeed(-2) end,
-  PROGRAM_A = function() ExecuteProgramButton(Properties["Program A Button (Red)"]) end,
-  PROGRAM_B = function() ExecuteProgramButton(Properties["Program B Button (Green)"]) end,
-  PROGRAM_C = function() ExecuteProgramButton(Properties["Program C Button (Yellow)"]) end,
-  PROGRAM_D = function() ExecuteProgramButton(Properties["Program D Button (Blue)"]) end,
+  -- Navigation
   UP = function() sendInput("Up") end,
   DOWN = function() sendInput("Down") end,
   LEFT = function() sendInput("Left") end,
@@ -335,45 +313,82 @@ local commandHandlers = {
   ENTER = function() sendInput("Select") end,
   CANCEL = function() sendInput("Back") end,
   MENU = function() sendInput("ContextMenu") end,
-  INFO = function() sendInput("Info") end
+  INFO = function() sendInput("Info") end,
+  
+  -- Playback Control
+  ON = function()
+    C4:SendToProxy(BINDING_ID, "ON", {})
+    sendInput("Home")
+  end,
+  
+  PLAY = function()
+    C4:SendToProxy(BINDING_ID, "ON", {})
+    state.ws:sendCommand("Player.PlayPause", {playerid = getPlayerId(), play = true})
+  end,
+  
+  PAUSE = function()
+    state.ws:sendCommand("Player.PlayPause", {playerid = getPlayerId(), play = false})
+  end,
+  
+  STOP = function()
+    state.ws:sendCommand("Player.Stop", {playerid = getPlayerId()})
+  end,
+  
+  -- Skip/Scan
+  SKIP_FWD = function()
+    state.ws:sendCommand("Player.Seek", {playerid = getPlayerId(), value = {seconds = getSkipInterval()}})
+  end,
+  
+  SKIP_REV = function()
+    state.ws:sendCommand("Player.Seek", {playerid = getPlayerId(), value = {seconds = -getSkipInterval()}})
+  end,
+  
+  SCAN_FWD = function()
+    state.ws:sendCommand("Player.SetSpeed", {playerid = getPlayerId(), speed = 2})
+  end,
+  
+  SCAN_REV = function()
+    state.ws:sendCommand("Player.SetSpeed", {playerid = getPlayerId(), speed = -2})
+  end,
+  
+  -- Program Buttons
+  PROGRAM_A = function() executeProgramButton("Program A Button (Red)") end,
+  PROGRAM_B = function() executeProgramButton("Program B Button (Green)") end,
+  PROGRAM_C = function() executeProgramButton("Program C Button (Yellow)") end,
+  PROGRAM_D = function() executeProgramButton("Program D Button (Blue)") end,
 }
 
+--------------------------------------------------------------------------------
+-- CONTROL4 DRIVER CALLBACKS
+--------------------------------------------------------------------------------
 function ReceivedFromProxy(bindingID, command, params)
-  debugLog("ReceivedFromProxy (" .. bindingID .. "): " .. command)
+  debugLog("Command: " .. command)
   
-  if bindingID == BINDING_ID then
-    local handler = commandHandlers[command]
-    if handler then
-      handler()
-    end
+  if bindingID ~= BINDING_ID or not state.ws then
+    return
+  end
+  
+  local handler = commandHandlers[command]
+  if handler then
+    handler()
   end
 end
 
--- Lifecycle Functions
-function OnDriverInit(driverInitType)
-  print("Kodi driver initialized: " .. tostring(driverInitType))
-  
-  if Properties["Enable Polling"] == "ON" then
-    StartPolling()
-  end
+function OnDriverInit()
+  log("Driver initialized")
+  C4:SetTimer(INIT_DELAY_MS, function()
+    connectWebSocket()
+  end)
 end
 
 function OnDriverDestroyed()
-  StopPolling()
+  disconnectWebSocket()
 end
 
 function OnPropertyChanged(property)
-  debugLog("Property changed: " .. property)
+  log("Property changed: " .. property)
   
-  if property == "Enable Polling" then
-    if Properties["Enable Polling"] == "ON" then
-      StartPolling()
-    else
-      StopPolling()
-    end
-  elseif property == "Poll Interval (seconds)" then
-    if Properties["Enable Polling"] == "ON" then
-      StartPolling()
-    end
+  if property == "IP Address" then
+    reconnectWebSocket()
   end
 end
