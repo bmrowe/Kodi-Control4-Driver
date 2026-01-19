@@ -31,6 +31,14 @@ function Commands.createHandlers(context)
     end
   end
 
+  local function isVideoPlayback()
+    return state.playbackType == "video"
+  end
+
+  local function isAnyPlayback()
+    return state.isInPlayback == true
+  end
+
   local handlers = {}
 
   handlers.UP = function()
@@ -66,7 +74,9 @@ function Commands.createHandlers(context)
   end
 
   handlers.ENTER = function()
-    if state.isInPlayback then
+    -- Only treat ENTER as playback-control when in VIDEO playback.
+    -- (Audio-only playback, like PM4K theme music, should not break tile selection.)
+    if isVideoPlayback() then
       if state.directionalsMode == "PM4K" then
         kodiRpc:executeAction("playpause")
       else
@@ -81,7 +91,8 @@ function Commands.createHandlers(context)
   handlers.MENU = function() kodiRpc:sendInput("ContextMenu") end
 
   handlers.INFO = function()
-    if state.isInPlayback then
+    -- Codec info is only meaningful for video playback; otherwise show regular info.
+    if isVideoPlayback() then
       kodiRpc:executeAction("codecinfo")
     else
       kodiRpc:sendInput("Info")
@@ -95,11 +106,28 @@ function Commands.createHandlers(context)
 
   handlers.PLAY = function()
     autoRoom.sendOn()
-    kodiRpc:executeAction("play")
+
+    -- If *anything* is already playing (audio or video), PLAY should control the player.
+    -- If nothing is playing, treat PLAY like Select to start the highlighted tile.
+    if isAnyPlayback() then
+      kodiRpc:executeAction("playpause")
+    else
+      kodiRpc:sendInput("Select")
+    end
   end
 
-  handlers.PAUSE = function() kodiRpc:executeAction("pause") end
-  handlers.STOP = function() kodiRpc:executeAction("stop") end
+  handlers.PAUSE = function()
+    -- Pause should only act when there is an active player; otherwise it’s harmless.
+    if isAnyPlayback() then
+      kodiRpc:executeAction("pause")
+    end
+  end
+
+  handlers.STOP = function()
+    if isAnyPlayback() then
+      kodiRpc:executeAction("stop")
+    end
+  end
 
   handlers.SKIP_FWD = function()
     local skipSeconds = getSkipIntervalSeconds()

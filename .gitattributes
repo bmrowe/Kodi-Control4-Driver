@@ -4,3 +4,5 @@
 *.c4z binary
 *.jpg binary
 *.png binary
+* text=auto
+*.xml text eol=lf

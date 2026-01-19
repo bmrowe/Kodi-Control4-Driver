@@ -12,12 +12,15 @@
   <driver>DriverWorks</driver>
   <small>icons/device_sm.png</small>
   <large>icons/device_lg.png</large>
+
   <categories>
     <category>Audio/Video</category>
   </categories>
+
   <proxies>
     <proxy>media_player</proxy>
   </proxies>
+
   <connections>
     <connection>
       <id>5001</id>
@@ -31,6 +34,7 @@
         </class>
       </classes>
     </connection>
+
     <connection>
       <id>2000</id>
       <type>5</type>
@@ -44,107 +48,44 @@
       </classes>
     </connection>
   </connections>
+
   <config>
     <documentation>
 # Kodi IP Control (v21+ Omega)
 
 This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-RPC API on port 9090.
 
-
 ## Setup
-
 1. In Kodi, go to Settings → Services → Control.
-2. Enable "Allow remote control via HTTP" (or the equivalent JSON-RPC control setting in v21+).
-3. Enable "Allow remote control from applications on other systems".
-4. In Control4 Composer, enter your Kodi device's IP Address property and refresh navigators. 
-
-
-## Features
-
-- Real-time playback state monitoring via WebSocket JSON-RPC (no polling).
-- Full media player control (play, pause, stop, scan, skip, navigation).
-- Directional navigation with selectable behavior:
-  - PM4K: Standard directional navigation.
-  - Kodi: Directional buttons become transport (step/big step) when in playback.
-- Configurable Program A/B/C/D buttons for OSD, subtitles, codec info, player process info, next audio/subtitle, screenshot, etc.
-- Auto Room On/Off:
-  - Auto Room On: Optionally turns the room on when playback starts.
-  - Auto Room Off: Optionally turns the room off when playback stops.
-- Status feedback properties:
-  - Player State (Stopped, Playing, Paused, Fast Forward/Rewind).
-  - Media Type (video, audio, etc. as reported by Kodi).
-  - Video Details (resolution, aspect ratio, codec, HDR/SDR).
-  - Audio Details (codec, channel count, language). [web:98][web:105]
-
-
-## Properties
-
-- **IP Address**  
-  IP address of the Kodi device (used to build ws://&lt;IP&gt;:9090/jsonrpc).
-
-- **Playback Directionals**  
-  Selects how D-Pad behaves:
-  - PM4K: Standard navigation always.
-  - Kodi: When in playback, UP/DOWN/LEFT/RIGHT send big/small step transport actions.
-
-- **Skip Interval (seconds)**  
-  Controls which skip action is used for SKIP_FWD / SKIP_REV:
-  - 5–29 seconds: smallstepforward/back.
-  - 30–599 seconds: stepforward/back.
-  - 600+ seconds: bigstepforward/back.
-
-- **Program A/B/C/D Button (Red/Green/Yellow/Blue)**  
-  Maps each colored button to a specific Kodi action:
-  - Show Codec Info
-  - Show OSD
-  - Show Player Process Info
-  - Toggle Subtitles
-  - Next Subtitle
-  - Next Audio Track
-  - Screenshot
-  - No Operation (disabled).
-
-- **Auto Room On**  
-  When set to ON, the driver sends an ON command to the Media Player proxy when Kodi transitions from not playing to playing (first Player.OnPlay). Use this to automatically turn the room on or select the source when playback begins. [web:105][web:103]
-
-- **Auto Room Off**  
-  When set to ON, the driver sends an OFF command to the Media Player proxy when Kodi transitions from in playback to stopped (Player.OnStop). Use this to turn the room off automatically when playback ends. [web:103]
-
-- **Debug Mode**  
-  When ON, verbose debug logs are printed to the Lua output.
-
-
-## Status Properties (read-only)
-
-- **Player State**  
-  Current player state: Stopped, Playing, Paused, or Fast Forward/Rewind.
-
-- **Media Type**  
-  Kodi-reported media type for the current item (for example, video or audio).
-
-- **Video Details**  
-  Combines video resolution, aspect ratio, codec, and HDR type, for example:  
-  `3840x2160 | 1.78:1 | hevc HDR`.
-
-- **Audio Details**  
-  Combines audio codec, channel count, and language, for example:  
-  `dts-hd ma 7.1ch eng`.
-
+2. Enable "Allow remote control from applications on other systems".
+3. In Control4 Composer, enter your Kodi device's IP Address property and refresh navigators.
 
 ## Notes
-
 - WebSocket connects on port 9090 (Kodi default for JSON-RPC events).
 - The driver is event-driven via WebSocket; no periodic polling of Kodi is required.
-- Designed and tested for Kodi v21+ (Omega); behavior on older versions is not guaranteed.
-
     </documentation>
+
     <script file="driver.lua" />
+
+    <!-- Driver Actions (Composer programming) -->
+    <actions>
+      <action>
+        <name>Reconnect WebSocket</name>
+        <command>ACTION_ReconnectWebSocket</command>
+      </action>
+      <action>
+        <name>Disconnect WebSocket</name>
+        <command>ACTION_DisconnectWebSocket</command>
+      </action>
+    </actions>
+
     <properties>
       <property>
         <name>IP Address</name>
         <type>STRING</type>
         <default></default>
       </property>
+
       <property>
         <name>Playback Directionals</name>
         <type>LIST</type>
@@ -155,6 +96,7 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
           <item>Kodi</item>
         </items>
       </property>
+
       <property>
         <name>Skip Interval (seconds)</name>
         <type>RANGED_INTEGER</type>
@@ -162,6 +104,7 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
         <maximum>600</maximum>
         <default>30</default>
       </property>
+
       <property>
         <name>Program A Button (Red)</name>
         <type>LIST</type>
@@ -177,6 +120,7 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
           <item>Screenshot</item>
         </items>
       </property>
+
       <property>
         <name>Program B Button (Green)</name>
         <type>LIST</type>
@@ -192,6 +136,7 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
           <item>Screenshot</item>
         </items>
       </property>
+
       <property>
         <name>Program C Button (Yellow)</name>
         <type>LIST</type>
@@ -207,6 +152,7 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
           <item>Screenshot</item>
         </items>
       </property>
+
       <property>
         <name>Program D Button (Blue)</name>
         <type>LIST</type>
@@ -222,6 +168,7 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
           <item>Screenshot</item>
         </items>
       </property>
+
       <property>
         <name>Auto Room On</name>
         <type>LIST</type>
@@ -231,6 +178,7 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
           <item>ON</item>
         </items>
       </property>
+
       <property>
         <name>Auto Room Off</name>
         <type>LIST</type>
@@ -240,6 +188,7 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
           <item>ON</item>
         </items>
       </property>
+
       <property>
         <name>Debug Mode</name>
         <type>LIST</type>
@@ -249,24 +198,36 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
           <item>ON</item>
         </items>
       </property>
+
+      <!-- New status property (driver.lua updates this) -->
+      <property>
+        <name>WebSocket Status</name>
+        <type>STRING</type>
+        <readonly>true</readonly>
+        <default>Disconnected</default>
+      </property>
+
       <property>
         <name>Player State</name>
         <type>STRING</type>
         <readonly>true</readonly>
         <default>Stopped</default>
       </property>
+
       <property>
         <name>Media Type</name>
         <type>STRING</type>
         <readonly>true</readonly>
         <default>-</default>
       </property>
+
       <property>
         <name>Video Details</name>
         <type>STRING</type>
         <readonly>true</readonly>
         <default>N/A</default>
       </property>
+
       <property>
         <name>Audio Details</name>
         <type>STRING</type>

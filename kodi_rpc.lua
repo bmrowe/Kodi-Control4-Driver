@@ -8,6 +8,11 @@ function KodiRpc:new(options)
   instance.callbackTimeoutMs = options.callbackTimeoutMs or 10000
   instance.logDebug = options.logDebug or function(_) end
   instance.logInfo = options.logInfo or function(_) end
+
+  -- Optional hooks (so the driver can own connection truth + reconnect)
+  instance.isConnectedFn = options.isConnectedFn
+  instance.onTransportError = options.onTransportError
+
   instance.webSocket = nil
   instance.nextRequestId = 0
   instance.pendingCallbacks = {}
@@ -20,6 +25,9 @@ function KodiRpc:setWebSocket(webSocket)
 end
 
 function KodiRpc:isConnected()
+  if self.isConnectedFn then
+    return self.isConnectedFn()
+  end
   return self.webSocket and self.webSocket.running
 end
 
@@ -47,9 +55,41 @@ function KodiRpc:_registerCallback(requestId, requestNameForLog, callback)
   end)
 end
 
+function KodiRpc:_failTransport(why)
+  self.logInfo("Transport failure: " .. tostring(why))
+  if self.onTransportError then
+    pcall(function() self.onTransportError(why) end)
+  end
+end
+
+function KodiRpc:_safeSend(payload, context)
+  if not self.webSocket then
+    self:_failTransport("no_websocket")
+    return false
+  end
+
+  local ok, retOrErr = pcall(function()
+    return self.webSocket:Send(payload)
+  end)
+
+  if not ok then
+    self:_failTransport("send_exception:" .. tostring(retOrErr))
+    return false
+  end
+
+  -- Some libs return nil/false on failure; treat that as failure too.
+  if retOrErr == nil or retOrErr == false then
+    self:_failTransport("send_failed:" .. tostring(context))
+    return false
+  end
+
+  return true
+end
+
 function KodiRpc:sendRequest(method, params, callback)
   if not self:isConnected() then
     self.logDebug("Cannot send " .. method .. " - WebSocket not connected")
+    self:_failTransport("not_connected")
     return false
   end
 
@@ -65,7 +105,12 @@ function KodiRpc:sendRequest(method, params, callback)
   self:_registerCallback(requestId, method, callback)
 
   self.logDebug("Sending: " .. method .. " (id=" .. requestId .. ")")
-  self.webSocket:Send(self.jsonEncode(request))
+  local ok = self:_safeSend(self.jsonEncode(request), method)
+  if not ok then
+    self.pendingCallbacks[tostring(requestId)] = nil
+    return false
+  end
+
   return true
 end
 
@@ -87,14 +132,22 @@ end
 function KodiRpc:sendInfoLabelsRequest(labels, callback)
   if not self:isConnected() then
     self.logDebug("Cannot send GetInfoLabels - WebSocket not connected")
+    self:_failTransport("not_connected")
     return false
   end
 
   local requestId = self:_allocateRequestId()
   self:_registerCallback(requestId, "GetInfoLabels", callback)
+
   local json = self:_buildGetInfoLabelsJson(requestId, labels)
   self.logDebug("Sending: XBMC.GetInfoLabels (id=" .. requestId .. ")")
-  self.webSocket:Send(json)
+
+  local ok = self:_safeSend(json, "GetInfoLabels")
+  if not ok then
+    self.pendingCallbacks[tostring(requestId)] = nil
+    return false
+  end
+
   return true
 end
 
@@ -109,6 +162,7 @@ end
 function KodiRpc:handleResponse(response)
   local responseIdKey = tostring(response.id)
   self.logDebug("Response ID: " .. responseIdKey)
+
   local callback = self.pendingCallbacks[responseIdKey]
   if not callback then return end
 
