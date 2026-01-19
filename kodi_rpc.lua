@@ -1,6 +1,16 @@
 local KodiRpc = {}
 KodiRpc.__index = KodiRpc
 
+local function cancelTimerHandle(t)
+  if not t then return end
+  if type(t) == "number" then
+    pcall(function() C4:KillTimer(t) end)
+  elseif type(t) == "userdata" and t.Cancel then
+    pcall(function() t:Cancel() end)
+  end
+end
+
+
 function KodiRpc:new(options)
   local instance = setmetatable({}, KodiRpc)
   instance.jsonEncode = assert(options.jsonEncode, "jsonEncode is required")
@@ -8,11 +18,8 @@ function KodiRpc:new(options)
   instance.callbackTimeoutMs = options.callbackTimeoutMs or 10000
   instance.logDebug = options.logDebug or function(_) end
   instance.logInfo = options.logInfo or function(_) end
-
-  -- Optional hooks (so the driver can own connection truth + reconnect)
   instance.isConnectedFn = options.isConnectedFn
   instance.onTransportError = options.onTransportError
-
   instance.webSocket = nil
   instance.nextRequestId = 0
   instance.pendingCallbacks = {}
@@ -32,6 +39,11 @@ function KodiRpc:isConnected()
 end
 
 function KodiRpc:clearPendingCallbacks()
+  for _, entry in pairs(self.pendingCallbacks) do
+    if type(entry) == "table" and entry.timerId then
+      cancelTimerHandle(entry.timerId)
+    end
+  end
   self.pendingCallbacks = {}
 end
 
@@ -43,16 +55,19 @@ end
 
 function KodiRpc:_registerCallback(requestId, requestNameForLog, callback)
   if not callback then return end
-
+  
   local requestIdKey = tostring(requestId)
-  self.pendingCallbacks[requestIdKey] = callback
-
-  self.setTimer(self.callbackTimeoutMs, function()
+  local timerId = self.setTimer(self.callbackTimeoutMs, function()
     if self.pendingCallbacks[requestIdKey] then
       self.logDebug("Callback timeout for " .. requestNameForLog .. " (id=" .. requestId .. ")")
       self.pendingCallbacks[requestIdKey] = nil
     end
   end)
+  
+  self.pendingCallbacks[requestIdKey] = {
+    callback = callback,
+    timerId = timerId
+  }
 end
 
 function KodiRpc:_failTransport(why)
@@ -162,16 +177,19 @@ end
 function KodiRpc:handleResponse(response)
   local responseIdKey = tostring(response.id)
   self.logDebug("Response ID: " .. responseIdKey)
-
-  local callback = self.pendingCallbacks[responseIdKey]
-  if not callback then return end
-
+  
+  local entry = self.pendingCallbacks[responseIdKey]
+  if not entry then return end
+  
   self.pendingCallbacks[responseIdKey] = nil
-
-  if not response.error then
-    callback(response.result)
-  else
-    self.logInfo("JSON-RPC error: " .. self.jsonEncode(response.error))
+  
+  if type(entry) == "table" then
+    if entry.timerId then cancelTimerHandle(entry.timerId) end
+    if not response.error then
+      entry.callback(response.result)
+    else
+      self.logInfo("JSON-RPC error: " .. self.jsonEncode(response.error))
+    end
   end
 end
 

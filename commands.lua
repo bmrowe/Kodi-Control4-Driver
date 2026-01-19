@@ -78,7 +78,7 @@ function Commands.createHandlers(context)
     -- (Audio-only playback, like PM4K theme music, should not break tile selection.)
     if isVideoPlayback() then
       if state.directionalsMode == "PM4K" then
-        kodiRpc:executeAction("playpause")
+        kodiRpc:sendInput("Select") -- can't send play/pause as it doesn't work when skipping intro of tv show
       else
         kodiRpc:executeAction("osd")
       end
@@ -100,13 +100,17 @@ function Commands.createHandlers(context)
   end
 
   handlers.ON = function()
-    autoRoom.sendOn()
+    if autoRoom.isOnEnabled() then
+      autoRoom.sendOn()
+    end
     kodiRpc:sendInput("Home")
   end
 
   handlers.PLAY = function()
-    autoRoom.sendOn()
-
+    if autoRoom.isOnEnabled() then
+      autoRoom.sendOn()
+    end
+    
     -- If *anything* is already playing (audio or video), PLAY should control the player.
     -- If nothing is playing, treat PLAY like Select to start the highlighted tile.
     if isAnyPlayback() then
