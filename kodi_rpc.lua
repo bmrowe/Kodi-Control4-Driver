@@ -118,16 +118,21 @@ function KodiRpc:sendRequest(method, params, callback)
   }
 
   self:_registerCallback(requestId, method, callback)
-
   self.logDebug("Sending: " .. method .. " (id=" .. requestId .. ")")
   local ok = self:_safeSend(self.jsonEncode(request), method)
   if not ok then
-    self.pendingCallbacks[tostring(requestId)] = nil
+    local key = tostring(requestId)
+    local entry = self.pendingCallbacks[key]
+    if type(entry) == "table" and entry.timerId then
+      cancelTimerHandle(entry.timerId)
+    end
+    self.pendingCallbacks[key] = nil
     return false
   end
 
   return true
 end
+
 
 function KodiRpc:_buildGetInfoLabelsJson(requestId, labels)
   -- Manual JSON array construction since C4:JsonEncode may not treat Lua arrays as JSON arrays.
