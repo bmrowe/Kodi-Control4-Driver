@@ -24,7 +24,9 @@ function AvDetails:new(options)
   instance.debounceMs = options.debounceMs or 500
 
   instance.timerId = nil
-
+  instance.inFlight = false
+  instance.gen = 0
+  instance.needsRefresh = false
   return instance
 end
 
@@ -69,17 +71,34 @@ local function buildAvDetails(infoLabels)
 end
 
 function AvDetails:requestNow()
+  if self.inFlight then
+    self.needsRefresh = true
+    return
+  end
+
+  local myGen = self.gen
+  self.inFlight = true
+  self.needsRefresh = false
   self.logDebug("Requesting AV details")
 
   self.kodiRpc:sendInfoLabelsRequest(AV_DETAILS_LABELS, function(result)
+    self.inFlight = false
+    if myGen ~= self.gen then return end
     local videoDetails, audioDetails = buildAvDetails(result)
     if not videoDetails or not audioDetails then
       self.logDebug("GetInfoLabels returned invalid data")
+      if self.needsRefresh then
+        self:scheduleUpdate()
+      end
       return
     end
 
     self.updateProperty("Video Details", videoDetails)
     self.updateProperty("Audio Details", audioDetails)
+
+    if self.needsRefresh then
+      self:scheduleUpdate()
+    end
 
     self.logDebug("Video Details: " .. videoDetails)
     self.logDebug("Audio Details: " .. audioDetails)
@@ -87,16 +106,27 @@ function AvDetails:requestNow()
 end
 
 function AvDetails:scheduleUpdate()
-  self.timerId = self.cancelTimer(self.timerId)
+  self.gen = self.gen + 1
+  local myGen = self.gen
+
+  self.cancelTimer(self.timerId)
   self.timerId = self.setTimer(self.debounceMs, function()
     self.timerId = nil
+    if myGen ~= self.gen then return end  -- stale callback, ignore
     self:requestNow()
   end)
 end
 
+
 function AvDetails:clear()
-  self.timerId = self.cancelTimer(self.timerId)
+  self.cancelTimer(self.timerId)
+  self.timerId = nil
+  self.gen = self.gen + 1  -- invalidate any queued callbacks
+  self.inFlight = false
+  self.needsRefresh = false
 end
+
+
 
 function AvDetails:resetProperties()
   self.updateProperty("Video Details", "N/A")

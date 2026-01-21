@@ -24,7 +24,7 @@ function C4Utils.updateProperty(propertyName, value)
 end
 
 function C4Utils.cancelTimer(timerId)
-  if timerId then
+  if type(timerId) == "number" and timerId ~= 0 then
     C4:KillTimer(timerId)
   end
   return nil

@@ -74,24 +74,14 @@ function Commands.createHandlers(context)
   end
 
   handlers.ENTER = function()
-    -- Only treat ENTER as playback-control when in VIDEO playback.
-    -- (Audio-only playback, like PM4K theme music, should not break tile selection.)
-    if isVideoPlayback() then
-      if state.directionalsMode == "PM4K" then
-        kodiRpc:sendInput("Select") -- can't send play/pause as it doesn't work when skipping intro of tv show
-      else
-        kodiRpc:executeAction("osd")
-      end
+    if shouldUseKodiPlaybackDirectionals() then
+      kodiRpc:executeAction("osd")
     else
       kodiRpc:sendInput("Select")
     end
   end
 
-  handlers.CANCEL = function() kodiRpc:sendInput("Back") end
-  handlers.MENU = function() kodiRpc:sendInput("ContextMenu") end
-
   handlers.INFO = function()
-    -- Codec info is only meaningful for video playback; otherwise show regular info.
     if isVideoPlayback() then
       kodiRpc:executeAction("codecinfo")
     else
@@ -110,27 +100,7 @@ function Commands.createHandlers(context)
     if autoRoom.isOnEnabled() then
       autoRoom.sendOn()
     end
-    
-    -- If *anything* is already playing (audio or video), PLAY should control the player.
-    -- If nothing is playing, treat PLAY like Select to start the highlighted tile.
-    if isAnyPlayback() then
-      kodiRpc:executeAction("playpause")
-    else
-      kodiRpc:sendInput("Select")
-    end
-  end
-
-  handlers.PAUSE = function()
-    -- Pause should only act when there is an active player; otherwise it’s harmless.
-    if isAnyPlayback() then
-      kodiRpc:executeAction("pause")
-    end
-  end
-
-  handlers.STOP = function()
-    if isAnyPlayback() then
-      kodiRpc:executeAction("stop")
-    end
+    kodiRpc:executeAction("playpause")
   end
 
   handlers.SKIP_FWD = function()
@@ -149,9 +119,12 @@ function Commands.createHandlers(context)
     kodiRpc:executeAction(action)
   end
 
+  handlers.CANCEL = function() kodiRpc:sendInput("Back") end
+  handlers.MENU = function() kodiRpc:sendInput("ContextMenu") end
+  handlers.PAUSE = function() kodiRpc:executeAction("pause") end
+  handlers.STOP = function() kodiRpc:executeAction("stop") end
   handlers.SCAN_FWD = function() kodiRpc:executeAction("fastforward") end
   handlers.SCAN_REV = function() kodiRpc:executeAction("rewind") end
-
   handlers.PROGRAM_A = function() executeProgramButton("Program A Button (Red)") end
   handlers.PROGRAM_B = function() executeProgramButton("Program B Button (Green)") end
   handlers.PROGRAM_C = function() executeProgramButton("Program C Button (Yellow)") end

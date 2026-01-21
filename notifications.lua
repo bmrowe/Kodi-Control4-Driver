@@ -123,16 +123,12 @@ function Notifications.createHandlers(context)
 
   handlers["Player.OnAVChange"] = function(_)
     logDebug("Player.OnAVChange notification")
-    if state.playbackType == "video" then
-      avDetails:scheduleUpdate()
-    end
+    avDetails:scheduleUpdate()
   end
 
   handlers["Player.OnAVStart"] = function(_)
     logDebug("Player.OnAVStart notification")
-    if state.playbackType == "video" then
-      avDetails:scheduleUpdate()
-    end
+    avDetails:scheduleUpdate()
   end
 
   return handlers
