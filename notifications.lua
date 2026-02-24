@@ -128,7 +128,9 @@ function Notifications.createHandlers(context)
 
   handlers["Player.OnAVStart"] = function(_)
     logDebug("Player.OnAVStart notification")
-    avDetails:scheduleUpdate()
+    refreshPlaybackState(function(_, _)
+      avDetails:scheduleUpdate()
+    end)
   end
 
   return handlers

@@ -61,6 +61,7 @@ Map Red, Green, Yellow, and Blue buttons to various Kodi functions:
 | Property | Description | Default |
 |----------|-------------|---------|
 | **IP Address** | IP address of your Kodi device | (required) |
+| **Startup Action on ON** | Action on `ON` command (`Kodi Home` or `Launch PM4K (script.plexmod)`) | Kodi Home |
 | **Skip Interval** | Seconds to skip forward/backward | 30 |
 | **Playback Directionals** | Navigation mode during playback | PM4K |
 | **Program Buttons** | Actions for Red/Green/Yellow/Blue buttons | No Operation |

@@ -5,8 +5,8 @@
   <name>Kodi IP Control</name>
   <model>Kodi v21+</model>
   <created>12/28/2024 12:00 PM</created>
-  <modified>01/16/2026 9:30 AM</modified>
-  <version>23</version>
+  <modified>02/24/2026 4:10 PM</modified>
+  <version>24</version>
   <control>lua_gen</control>
   <controlmethod>ip</controlmethod>
   <driver>DriverWorks</driver>
@@ -94,6 +94,17 @@ This driver provides IP control for Kodi v21+ (Omega) using the WebSocket JSON-R
         <items>
           <item>PM4K</item>
           <item>Kodi</item>
+        </items>
+      </property>
+
+      <property>
+        <name>Startup Action on ON</name>
+        <type>LIST</type>
+        <readonly>false</readonly>
+        <default>Kodi Home</default>
+        <items>
+          <item>Kodi Home</item>
+          <item>Launch PM4K (script.plexmod)</item>
         </items>
       </property>
 

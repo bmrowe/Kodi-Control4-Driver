@@ -9,6 +9,7 @@ local PROGRAM_ACTION_MAP = {
   ["Next Audio Track"] = "audionextlanguage",
   ["Screenshot"] = "screenshot",
 }
+local PM4K_PLUGIN_URL = "plugin://script.plexmod/"
 
 function Commands.createHandlers(context)
   local state = assert(context.state, "state is required")
@@ -93,7 +94,11 @@ function Commands.createHandlers(context)
     if autoRoom.isOnEnabled() then
       autoRoom.sendOn()
     end
-    kodiRpc:sendInput("Home")
+    if Properties and Properties["Startup Action on ON"] == "Launch PM4K (script.plexmod)" then
+      kodiRpc:sendRequest("Player.Open", { item = { file = PM4K_PLUGIN_URL } })
+    else
+      kodiRpc:sendInput("Home")
+    end
   end
 
   handlers.PLAY = function()
