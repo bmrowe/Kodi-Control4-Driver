@@ -8,6 +8,7 @@ local WebSocket = require("drivers-common-public.module.websocket")
 local MEDIA_PLAYER_BINDING_ID = 5001
 local KODI_WEBSOCKET_PORT = 9090
 local DEFAULT_SKIP_INTERVAL_SECONDS = 30
+local WEBSOCKET_PING_INTERVAL_SECONDS = 5
 
 local RECONNECT_DELAY_MS = 5000
 local JSONRPC_CALLBACK_TIMEOUT_MS = 10000
@@ -231,6 +232,8 @@ connectKodiWebSocket = function()
     scheduleWebSocketReconnect()
     return
   end
+
+  ws.ping_interval = WEBSOCKET_PING_INTERVAL_SECONDS
 
   state.webSocket = ws
   kodiRpc:setWebSocket(ws)
