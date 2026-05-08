@@ -38,6 +38,7 @@ local state = {
 -- Forward declarations (avoid Lua scoping issues)
 local connectKodiWebSocket
 local kodiRpc
+local commandHandlers
 
 local function updateProperty(name, value)
   C4Utils.updateProperty(name, value)
@@ -94,6 +95,37 @@ local function setWsStatus(connected, connecting, reason)
   )
 end
 
+local function cancelWebSocketTimer(timerId)
+  if not timerId then return end
+  if type(CancelTimer) == "function" then
+    pcall(CancelTimer, timerId)
+  elseif type(timerId) == "userdata" and timerId.Cancel then
+    pcall(function() timerId:Cancel() end)
+  elseif type(timerId) == "number" then
+    pcall(function() C4:KillTimer(timerId) end)
+  end
+end
+
+local function clearWebSocketBindingAddress(bindingId)
+  if type(bindingId) ~= "number" then return end
+  pcall(C4.SetBindingAddress, C4, bindingId, "")
+end
+
+local function releaseWebSocketBinding(webSocket)
+  if not webSocket then return end
+  cancelWebSocketTimer(webSocket.ClosingTimer)
+  if type(webSocket.netBinding) == "number" and type(webSocket.port) == "number" then
+    pcall(C4.NetDisconnect, C4, webSocket.netBinding, webSocket.port)
+  end
+  clearWebSocketBindingAddress(webSocket.netBinding)
+end
+
+local function clearStaleWebSocketBindingAddresses()
+  for bindingId = 6100, 6199 do
+    clearWebSocketBindingAddress(bindingId)
+  end
+end
+
 local function disconnectWebSocket(reason)
   if reason then
     logInfo("Disconnecting WebSocket (" .. tostring(reason) .. ")")
@@ -105,14 +137,20 @@ local function disconnectWebSocket(reason)
   state.reconnectTimerId = cancelTimer(state.reconnectTimerId)
 
   if state.webSocket then
+    local webSocket = state.webSocket
     -- delete() is important with this library because it caches sockets by URL
-    pcall(function() state.webSocket:delete() end)
+    pcall(function() webSocket:delete() end)
+    releaseWebSocketBinding(webSocket)
     state.webSocket = nil
   end
 
   if kodiRpc then
     kodiRpc:setWebSocket(nil)
     kodiRpc:clearPendingCallbacks()
+  end
+
+  if commandHandlers and commandHandlers.STOP_REPEAT then
+    commandHandlers.STOP_REPEAT()
   end
 end
 
@@ -166,12 +204,15 @@ local notificationHandlers = Notifications.createHandlers({
 })
 
 
-local commandHandlers = Commands.createHandlers({
+commandHandlers = Commands.createHandlers({
   state = state,
   kodiRpc = kodiRpc,
   getSkipIntervalSeconds = getSkipIntervalSeconds,
   shouldUseKodiPlaybackDirectionals = shouldUseKodiPlaybackDirectionals,
   autoRoom = autoRoom,
+  setTimer = function(ms, callback) return C4:SetTimer(ms, callback) end,
+  cancelTimer = cancelTimer,
+  logInfo = logInfo,
 })
 
 local function handleKodiNotification(method, data)
@@ -281,13 +322,17 @@ end
 function ReceivedFromProxy(bindingID, command, params)
   if bindingID == MEDIA_PLAYER_BINDING_ID and commandHandlers[command] then
     logDebug("Command: " .. command)
-    commandHandlers[command]()
+    local ok, err = pcall(function() commandHandlers[command](params) end)
+    if not ok then
+      logInfo("ReceivedFromProxy error (" .. tostring(command) .. "): " .. tostring(err))
+    end
   end
 end
 
 function OnDriverInit()
   logInfo("Driver initialized")
   state.isShuttingDown = false
+  clearStaleWebSocketBindingAddresses()
   loadDirectionalsModeFromProperties()
   connectKodiWebSocket()
 end

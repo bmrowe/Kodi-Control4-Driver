@@ -25,7 +25,9 @@ end
 
 function C4Utils.cancelTimer(timerId)
   if type(timerId) == "number" and timerId ~= 0 then
-    C4:KillTimer(timerId)
+    pcall(function() C4:KillTimer(timerId) end)
+  elseif type(timerId) == "userdata" and timerId.Cancel then
+    pcall(function() timerId:Cancel() end)
   end
   return nil
 end

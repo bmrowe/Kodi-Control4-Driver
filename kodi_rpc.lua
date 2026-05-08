@@ -43,8 +43,22 @@ function KodiRpc:clearPendingCallbacks()
     if type(entry) == "table" and entry.timerId then
       cancelTimerHandle(entry.timerId)
     end
+    self:_completeCallback(entry, nil, "cancelled")
   end
   self.pendingCallbacks = {}
+end
+
+function KodiRpc:_completeCallback(entry, result, err)
+  if type(entry) ~= "table" or type(entry.callback) ~= "function" then
+    return
+  end
+
+  local ok, callbackErr = pcall(function()
+    entry.callback(result, err)
+  end)
+  if not ok then
+    self.logInfo("JSON-RPC callback error: " .. tostring(callbackErr))
+  end
 end
 
 function KodiRpc:_allocateRequestId()
@@ -58,9 +72,11 @@ function KodiRpc:_registerCallback(requestId, requestNameForLog, callback)
   
   local requestIdKey = tostring(requestId)
   local timerId = self.setTimer(self.callbackTimeoutMs, function()
-    if self.pendingCallbacks[requestIdKey] then
+    local entry = self.pendingCallbacks[requestIdKey]
+    if entry then
       self.logDebug("Callback timeout for " .. requestNameForLog .. " (id=" .. requestId .. ")")
       self.pendingCallbacks[requestIdKey] = nil
+      self:_completeCallback(entry, nil, "timeout")
     end
   end)
   
@@ -127,6 +143,7 @@ function KodiRpc:sendRequest(method, params, callback)
       cancelTimerHandle(entry.timerId)
     end
     self.pendingCallbacks[key] = nil
+    self:_completeCallback(entry, nil, "send_failed")
     return false
   end
 
@@ -164,7 +181,13 @@ function KodiRpc:sendInfoLabelsRequest(labels, callback)
 
   local ok = self:_safeSend(json, "GetInfoLabels")
   if not ok then
-    self.pendingCallbacks[tostring(requestId)] = nil
+    local key = tostring(requestId)
+    local entry = self.pendingCallbacks[key]
+    if type(entry) == "table" and entry.timerId then
+      cancelTimerHandle(entry.timerId)
+    end
+    self.pendingCallbacks[key] = nil
+    self:_completeCallback(entry, nil, "send_failed")
     return false
   end
 
@@ -191,9 +214,10 @@ function KodiRpc:handleResponse(response)
   if type(entry) == "table" then
     if entry.timerId then cancelTimerHandle(entry.timerId) end
     if not response.error then
-      entry.callback(response.result)
+      self:_completeCallback(entry, response.result, nil)
     else
       self.logInfo("JSON-RPC error: " .. self.jsonEncode(response.error))
+      self:_completeCallback(entry, nil, response.error)
     end
   end
 end

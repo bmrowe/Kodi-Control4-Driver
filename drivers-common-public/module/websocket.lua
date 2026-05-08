@@ -316,7 +316,12 @@ function WebSocket:ParsePacket (strData)
 end
 
 function WebSocket:parseWSPacket ()
-	local _, h1, h2, b1, b2, b3, b4, b5, b6, b7, b8 = string.unpack (self.buf, 'bbbbbbbbbb')
+	local buflen = string.len (self.buf)
+	if (buflen < 2) then
+		return
+	end
+
+	local h1, h2 = string.byte (self.buf, 1, 2)
 
 	local final = (bit.band (h1, 0x80) == 0x80)
 	local rsv1 = (bit.band (h1, 0x40) == 0x40)
@@ -334,12 +339,20 @@ function WebSocket:parseWSPacket ()
 		-- 1-byte length
 		msglen = len
 	elseif (len == 126) then
+		if (buflen < 4) then
+			return
+		end
 		-- 2-byte length
+		local b1, b2 = string.byte (self.buf, 3, 4)
 		msglen = msglen + b1; msglen = msglen * 0x100
 		msglen = msglen + b2;
 		headerlen = 4
 	elseif (len == 127) then
+		if (buflen < 10) then
+			return
+		end
 		-- 8-byte length
+		local b1, b2, b3, b4, b5, b6, b7, b8 = string.byte (self.buf, 3, 10)
 		msglen = msglen + b1; msglen = msglen * 0x100
 		msglen = msglen + b2; msglen = msglen * 0x100
 		msglen = msglen + b3; msglen = msglen * 0x100
@@ -352,6 +365,9 @@ function WebSocket:parseWSPacket ()
 	end
 
 	if (masked) then
+		if (buflen < headerlen + 4) then
+			return
+		end
 		local maskbytes = string.sub (self.buf, headerlen + 1, headerlen + 5)
 		mask = {}
 		for i = 1, 4 do

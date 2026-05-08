@@ -81,9 +81,17 @@ function AvDetails:requestNow()
   self.needsRefresh = false
   self.logDebug("Requesting AV details")
 
-  self.kodiRpc:sendInfoLabelsRequest(AV_DETAILS_LABELS, function(result)
+  local sent = self.kodiRpc:sendInfoLabelsRequest(AV_DETAILS_LABELS, function(result, err)
     self.inFlight = false
     if myGen ~= self.gen then return end
+    if err then
+      self.logDebug("GetInfoLabels failed: " .. tostring(err))
+      if self.needsRefresh then
+        self:scheduleUpdate()
+      end
+      return
+    end
+
     local videoDetails, audioDetails = buildAvDetails(result)
     if not videoDetails or not audioDetails then
       self.logDebug("GetInfoLabels returned invalid data")
@@ -103,6 +111,10 @@ function AvDetails:requestNow()
     self.logDebug("Video Details: " .. videoDetails)
     self.logDebug("Audio Details: " .. audioDetails)
   end)
+
+  if not sent then
+    self.inFlight = false
+  end
 end
 
 function AvDetails:scheduleUpdate()
