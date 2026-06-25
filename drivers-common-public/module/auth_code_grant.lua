@@ -1,6 +1,6 @@
--- Copyright 2022 Snap One, LLC. All rights reserved.
+-- Copyright 2026 Snap One, LLC. All rights reserved.
 
-AUTH_CODE_GRANT_VER = 24
+AUTH_CODE_GRANT_VER = 36
 
 require ('drivers-common-public.global.lib')
 require ('drivers-common-public.global.url')
@@ -10,9 +10,9 @@ pcall (require, 'drivers-common-public.global.make_short_link')
 
 Metrics = require ('drivers-common-public.module.metrics')
 
-local oauth = {}
+local oauthObject = {}
 
-function oauth:new (tParams, providedRefreshToken)
+function oauthObject:new (tParams, providedRefreshToken)
 	local o = {
 		NAME = tParams.NAME,
 		AUTHORIZATION = tParams.AUTHORIZATION,
@@ -33,13 +33,19 @@ function oauth:new (tParams, providedRefreshToken)
 
 		TOKEN_HEADERS = tParams.TOKEN_HEADERS,
 
+		USE_PKCE = tParams.USE_PKCE,
+
+		MAX_EXPIRES_IN = tParams.MAX_EXPIRES_IN or 86400,  -- one day
+		DEFAULT_EXPIRES_IN = tParams.DEFAULT_EXPIRES_IN or 3600, -- one hour
+
 		notifyHandler = {},
-		Timer = {},
 	}
 
 	if (tParams.USE_BASIC_AUTH_HEADER) then
-		o.BasicAuthHeader = 'Basic ' .. C4:Base64Encode (tParams.API_CLIENT_ID .. ':' .. tParams.API_SECRET)
+		o.BasicAuthHeader = 'Basic ' .. C4:Base64Encode (o.API_CLIENT_ID .. ':' .. o.API_SECRET)
 	end
+
+	o.timerPrefix = 'OAuth_' .. (o.NAME or o.API_CLIENT_ID or GetRandomString (10)) .. '_Timer_'
 
 	setmetatable (o, self)
 	self.__index = self
@@ -59,7 +65,7 @@ function oauth:new (tParams, providedRefreshToken)
 			if (errString) then
 				o.metrics:SetString ('Error_DecryptRefreshToken', errString)
 			end
-				if (refreshToken) then
+			if (refreshToken) then
 				initialRefreshToken = refreshToken
 			end
 		end
@@ -70,7 +76,7 @@ function oauth:new (tParams, providedRefreshToken)
 		local _timer = function (timer)
 			o:RefreshToken (nil, initialRefreshToken)
 		end
-		SetTimer (nil, ONE_SECOND, _timer)
+		SetTimer (o.timerPrefix .. 'InitWithToken', ONE_SECOND, _timer)
 	else
 		o.metrics:SetCounter ('InitWithoutToken')
 	end
@@ -80,7 +86,7 @@ function oauth:new (tParams, providedRefreshToken)
 	return o, willGenerateRefreshEvent
 end
 
-function oauth:MakeState (contextInfo, extras, uriToCompletePage)
+function oauthObject:MakeState (contextInfo, extraParamsForAuthLink, uriToCompletePage)
 	if (type (contextInfo) ~= 'table') then
 		contextInfo = {}
 	end
@@ -104,14 +110,14 @@ function oauth:MakeState (contextInfo, extras, uriToCompletePage)
 	local context = {
 		contextInfo = contextInfo,
 		state = state,
-		extras = extras
+		extraParamsForAuthLink = extraParamsForAuthLink,
 	}
 
 	self.metrics:SetCounter ('MakeStateAttempt')
 	self:urlPost (url, data, headers, 'MakeStateResponse', context)
 end
 
-function oauth:MakeStateResponse (strError, responseCode, tHeaders, data, context, url)
+function oauthObject:MakeStateResponse (strError, responseCode, tHeaders, data, context, url)
 	if (strError) then
 		dbg ('Error with MakeState', strError)
 		return
@@ -122,7 +128,7 @@ function oauth:MakeStateResponse (strError, responseCode, tHeaders, data, contex
 	if (responseCode == 200) then
 		self.metrics:SetCounter ('MakeStateSuccess')
 		local state = context.state
-		local extras = context.extras
+		local extraParamsForAuthLink = context.extraParamsForAuthLink
 
 		local nonce = data.nonce
 		local expiresAt = data.expiresAt or (os.time () + self.REDIRECT_DURATION)
@@ -130,7 +136,7 @@ function oauth:MakeStateResponse (strError, responseCode, tHeaders, data, contex
 		local timeRemaining = expiresAt - os.time ()
 
 		local _timedOut = function (timer)
-			CancelTimer (self.Timer.CheckState)
+			CancelTimer (self.timerPrefix .. 'CheckState')
 
 			self:setLink ('')
 
@@ -138,18 +144,18 @@ function oauth:MakeStateResponse (strError, responseCode, tHeaders, data, contex
 			self:notify ('ActivationTimeOut', contextInfo)
 		end
 
-		self.Timer.GetCodeStatusExpired = SetTimer (self.Timer.GetCodeStatusExpired, timeRemaining * ONE_SECOND, _timedOut)
+		SetTimer (self.timerPrefix .. 'GetCodeStatusExpired', timeRemaining * ONE_SECOND, _timedOut)
 
 		local _timer = function (timer)
 			self:CheckState (state, contextInfo, nonce)
 		end
-		self.Timer.CheckState = SetTimer (self.Timer.CheckState, 5 * ONE_SECOND, _timer, true)
+		SetTimer (self.timerPrefix .. 'CheckState', 5 * ONE_SECOND, _timer, true)
 
-		self:GetLinkCode (state, contextInfo, extras)
+		self:GetLinkCode (state, contextInfo, extraParamsForAuthLink)
 	end
 end
 
-function oauth:GetLinkCode (state, contextInfo, extras)
+function oauthObject:GetLinkCode (state, contextInfo, extraParamsForAuthLink)
 	if (type (contextInfo) ~= 'table') then
 		contextInfo = {}
 	end
@@ -171,8 +177,19 @@ function oauth:GetLinkCode (state, contextInfo, extras)
 		scope = scope,
 	}
 
-	if (extras and type (extras) == 'table') then
-		for k, v in pairs (extras) do
+	if (self.USE_PKCE) then
+		self.code_verifier = GetRandomString (128)
+
+		local code_challenge = C4:Hash ('SHA256', self.code_verifier, SHA_ENC_DEFAULTS)
+		local code_challenge_b64 = C4:Base64Encode (code_challenge)
+		local code_challenge_b64_url = code_challenge_b64:gsub ('%+', '-'):gsub ('%/', '_'):gsub ('%=', '')
+
+		args.code_challenge = code_challenge_b64_url
+		args.code_challenge_method = 'S256'
+	end
+
+	if (extraParamsForAuthLink and type (extraParamsForAuthLink) == 'table') then
+		for k, v in pairs (extraParamsForAuthLink) do
 			args [k] = v
 		end
 	end
@@ -189,17 +206,17 @@ function oauth:GetLinkCode (state, contextInfo, extras)
 	end
 end
 
-function oauth:CheckState (state, contextInfo, nonce)
+function oauthObject:CheckState (state, contextInfo, nonce)
 	if (type (contextInfo) ~= 'table') then
 		contextInfo = {}
 	end
 
-	local url = MakeURL (self.REDIRECT_URI .. 'state', {state = state, nonce = nonce})
+	local url = MakeURL (self.REDIRECT_URI .. 'state', { state = state, nonce = nonce, })
 
-	self:urlGet (url, nil, 'CheckStateResponse', {state = state, contextInfo = contextInfo})
+	self:urlGet (url, nil, 'CheckStateResponse', { state = state, contextInfo = contextInfo, })
 end
 
-function oauth:CheckStateResponse (strError, responseCode, tHeaders, data, context, url)
+function oauthObject:CheckStateResponse (strError, responseCode, tHeaders, data, context, url)
 	if (strError) then
 		dbg ('Error with CheckState:', strError)
 		return
@@ -210,33 +227,32 @@ function oauth:CheckStateResponse (strError, responseCode, tHeaders, data, conte
 	if (responseCode == 200 and data.code) then
 		-- state exists and has been authorized
 
-		CancelTimer (self.Timer.CheckState)
-		CancelTimer (self.Timer.GetCodeStatusExpired)
-
-		self:GetUserToken (data.code, contextInfo)
+		CancelTimer (self.timerPrefix .. 'CheckState')
+		CancelTimer (self.timerPrefix .. 'GetCodeStatusExpired')
 
 		self.metrics:SetCounter ('LinkCodeConfirmed')
-		self:notify ('LinkCodeConfirmed', contextInfo)
+		self:notify ('LinkCodeConfirmed', contextInfo, data.code)
 
+		if (self.TOKEN_ENDPOINT_URI) then
+			self:GetUserToken (data.code, contextInfo)
+		end
 	elseif (responseCode == 204) then
 		self:notify ('LinkCodeWaiting', contextInfo)
-
 	elseif (responseCode == 401) then
 		-- nonce value incorrect or missing for this state
 
-		CancelTimer (self.Timer.CheckState)
-		CancelTimer (self.Timer.GetCodeStatusExpired)
+		CancelTimer (self.timerPrefix .. 'CheckState')
+		CancelTimer (self.timerPrefix .. 'GetCodeStatusExpired')
 
 		self:setLink ('')
 
 		self.metrics:SetCounter ('LinkCodeError')
 		self:notify ('LinkCodeError', contextInfo)
-
 	elseif (responseCode == 403) then
 		-- state exists and has been denied authorization by the service
 
-		CancelTimer (self.Timer.CheckState)
-		CancelTimer (self.Timer.GetCodeStatusExpired)
+		CancelTimer (self.timerPrefix .. 'CheckState')
+		CancelTimer (self.timerPrefix .. 'GetCodeStatusExpired')
 
 		self:setLink ('')
 
@@ -248,12 +264,11 @@ function oauth:CheckStateResponse (strError, responseCode, tHeaders, data, conte
 			self.metrics:SetString ('LinkCodeDeniedDescription', data.error_description)
 		end
 		self:notify ('LinkCodeDenied', contextInfo, data.error, data.error_description, data.error_uri)
-
 	elseif (responseCode == 404) then
 		-- state doesn't exist
 
-		CancelTimer (self.Timer.CheckState)
-		CancelTimer (self.Timer.GetCodeStatusExpired)
+		CancelTimer (self.timerPrefix .. 'CheckState')
+		CancelTimer (self.timerPrefix .. 'GetCodeStatusExpired')
 
 		self:setLink ('')
 
@@ -262,7 +277,7 @@ function oauth:CheckStateResponse (strError, responseCode, tHeaders, data, conte
 	end
 end
 
-function oauth:GetUserToken (code, contextInfo)
+function oauthObject:GetUserToken (code, contextInfo)
 	if (type (contextInfo) ~= 'table') then
 		contextInfo = {}
 	end
@@ -275,6 +290,10 @@ function oauth:GetUserToken (code, contextInfo)
 			code = code,
 			redirect_uri = self.REDIRECT_URI .. 'callback',
 		}
+
+		if (self.USE_PKCE) then
+			args.code_verifier = self.code_verifier
+		end
 
 		local url = self.TOKEN_ENDPOINT_URI
 
@@ -293,11 +312,16 @@ function oauth:GetUserToken (code, contextInfo)
 			end
 		end
 
-		self:urlPost (url, data, headers, 'GetTokenResponse', {contextInfo = contextInfo})
+		local context = {
+			contextInfo = contextInfo,
+			reason = 'authorization_code',
+		}
+
+		self:urlPost (url, data, headers, 'GetTokenResponse', context)
 	end
 end
 
-function oauth:RefreshToken (contextInfo, newRefreshToken)
+function oauthObject:RefreshToken (contextInfo, newRefreshToken)
 	if (newRefreshToken) then
 		self.REFRESH_TOKEN = newRefreshToken
 	end
@@ -305,6 +329,11 @@ function oauth:RefreshToken (contextInfo, newRefreshToken)
 	if (self.REFRESH_TOKEN == nil) then
 		self.metrics:SetCounter ('NoRefreshToken')
 		return false
+	end
+
+	if (self.RefreshingToken) then
+		self.metrics:SetCounter ('CollisionAvoided')
+		return
 	end
 
 	if (type (contextInfo) ~= 'table') then
@@ -335,16 +364,32 @@ function oauth:RefreshToken (contextInfo, newRefreshToken)
 		end
 	end
 
-	self:urlPost (url, data, headers, 'GetTokenResponse', {contextInfo = contextInfo})
+	local _timer = function (timer)
+		self.metrics:SetCounter ('CollisionAvoidanceTimerExpired')
+		self.RefreshingToken = false
+		self:RefreshToken ()
+	end
+	SetTimer (self.timerPrefix .. 'RefreshCollisionAvoidance', 30 * ONE_SECOND, _timer)
+	self.RefreshingToken = true
+
+	local context = {
+		contextInfo = contextInfo,
+		reason = 'refresh_token',
+	}
+
+	self:urlPost (url, data, headers, 'GetTokenResponse', context)
 end
 
-function oauth:GetTokenResponse (strError, responseCode, tHeaders, data, context, url)
+function oauthObject:GetTokenResponse (strError, responseCode, tHeaders, data, context, url)
+	CancelTimer (self.timerPrefix .. 'RefreshCollisionAvoidance')
+	self.RefreshingToken = false
+
 	if (strError) then
 		dbg ('Error with GetToken:', strError)
 		local _timer = function (timer)
 			self:RefreshToken ()
 		end
-		self.Timer.RefreshToken = SetTimer (self.Timer.RefreshToken, 30 * 1000, _timer)
+		SetTimer (self.timerPrefix .. 'RefreshToken', 30 * ONE_SECOND, _timer)
 		return
 	end
 
@@ -366,23 +411,34 @@ function oauth:GetTokenResponse (strError, responseCode, tHeaders, data, context
 
 		self.SCOPE = data.scope or self.SCOPE
 
-		self.EXPIRES_IN = data.expires_in
+		self.EXPIRES_IN = tonumber (data.expires_in) or self.EXPIRES_IN or self.DEFAULT_EXPIRES_IN
 
 		if (self.EXPIRES_IN and self.REFRESH_TOKEN) then
 			local _timer = function (timer)
 				self:RefreshToken ()
 			end
+			if (self.EXPIRES_IN > self.MAX_EXPIRES_IN) then
+				self.metrics:SetCounter ('ShortenedExpiryTime')
+				self.EXPIRES_IN_ORIGINAL = self.EXPIRES_IN
+				self.EXPIRES_IN = self.MAX_EXPIRES_IN
+			end
 
-			self.Timer.RefreshToken = SetTimer (self.Timer.RefreshToken, self.EXPIRES_IN * 950, _timer)
+			-- smear out refreshing the token to avoid all tokens across entire system being refreshed at the same time
+			local delay = self.EXPIRES_IN * math.random (750, 950)
+
+			SetTimer (self.timerPrefix .. 'RefreshToken', delay, _timer)
 		end
 
 		print ((self.NAME or 'OAuth') .. ': Access Token received, accessToken:' .. tostring (self.ACCESS_TOKEN ~= nil) .. ', refreshToken:' .. tostring (self.REFRESH_TOKEN ~= nil))
 
 		self:setLink ('')
 
-		self.metrics:SetCounter ('AccessTokenGranted')
+		if (context.reason == 'refresh_token') then
+			self.metrics:SetCounter ('AccessTokenRefreshed')
+		elseif (context.reason == 'authorization_code') then
+			self.metrics:SetCounter ('AccessTokenGranted')
+		end
 		self:notify ('AccessTokenGranted', contextInfo, self.ACCESS_TOKEN, self.REFRESH_TOKEN)
-
 	elseif (responseCode >= 400 and responseCode < 500) then
 		self.ACCESS_TOKEN = nil
 		self.REFRESH_TOKEN = nil
@@ -395,8 +451,8 @@ function oauth:GetTokenResponse (strError, responseCode, tHeaders, data, context
 
 		self:setLink ('')
 
-
 		self.metrics:SetCounter ('AccessTokenDenied')
+		self.metrics:SetString ('AccessTokenDeniedResponseCode', tostring (responseCode))
 		if (data.error) then
 			self.metrics:SetString ('AccessTokenDeniedReason', data.error)
 		end
@@ -407,18 +463,22 @@ function oauth:GetTokenResponse (strError, responseCode, tHeaders, data, context
 	end
 end
 
-function oauth:DeleteRefreshToken ()
+function oauthObject:DeleteRefreshToken ()
+	local existed = (self.REFRESH_TOKEN ~= nil)
+
 	local persistStoreKey = C4:Hash ('SHA256', C4:GetDeviceID () .. self.API_CLIENT_ID, SHA_ENC_DEFAULTS)
 	PersistDeleteValue (persistStoreKey)
 	self.ACCESS_TOKEN = nil
 	self.REFRESH_TOKEN = nil
 
-	self.Timer.RefreshToken = CancelTimer (self.Timer.RefreshToken)
+	CancelTimer (self.timerPrefix .. 'RefreshToken')
 
 	self.metrics:SetCounter ('RefreshTokenDeleted')
+
+	self:notify ('RefreshTokenDeleted', nil, existed)
 end
 
-function oauth:setLink (link, contextInfo)
+function oauthObject:setLink (link, contextInfo)
 	if (link ~= '') then
 		self.metrics:SetCounter ('LinkCodeReceived')
 	end
@@ -432,16 +492,16 @@ function oauth:setLink (link, contextInfo)
 	end
 end
 
-function oauth:notify (handler, ...)
+function oauthObject:notify (handler, contextInfo, ...)
 	if (self.notifyHandler [handler] and type (self.notifyHandler [handler]) == 'function') then
-		local success, ret = pcall (self.notifyHandler [handler], ...)
+		local success, ret = pcall (self.notifyHandler [handler], contextInfo, ...)
 		if (success == false) then
 			print ((self.NAME or 'OAuth') .. ':' .. handler .. ' Lua error: ', ret, ...)
 		end
 	end
 end
 
-function oauth:urlDo (method, url, data, headers, callback, context)
+function oauthObject:urlDo (method, url, data, headers, callback, context)
 	local ticketHandler = function (strError, responseCode, tHeaders, data, context, url)
 		local func = self [callback]
 		local success, ret = pcall (func, self, strError, responseCode, tHeaders, data, context, url)
@@ -450,24 +510,24 @@ function oauth:urlDo (method, url, data, headers, callback, context)
 	urlDo (method, url, data, headers, ticketHandler, context)
 end
 
-function oauth:urlGet (url, headers, callback, context)
-	self:urlDo ('GET', url, data, headers, callback, context)
+function oauthObject:urlGet (url, headers, callback, context)
+	self:urlDo ('GET', url, nil, headers, callback, context)
 end
 
-function oauth:urlPost (url, data, headers, callback, context)
+function oauthObject:urlPost (url, data, headers, callback, context)
 	self:urlDo ('POST', url, data, headers, callback, context)
 end
 
-function oauth:urlPut (url, data, headers, callback, context)
+function oauthObject:urlPut (url, data, headers, callback, context)
 	self:urlDo ('PUT', url, data, headers, callback, context)
 end
 
-function oauth:urlDelete (url, headers, callback, context)
-	self:urlDo ('DELETE', url, data, headers, callback, context)
+function oauthObject:urlDelete (url, headers, callback, context)
+	self:urlDo ('DELETE', url, nil, headers, callback, context)
 end
 
-function oauth:urlCustom (url, method, data, headers, callback, context)
+function oauthObject:urlCustom (url, method, data, headers, callback, context)
 	self:urlDo (method, url, data, headers, callback, context)
 end
 
-return oauth
+return oauthObject

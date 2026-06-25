@@ -1,8 +1,8 @@
--- Copyright 2020 Wirepath Home Systems, LLC. All rights reserved.
+-- Copyright 2026 Snap One, LLC. All rights reserved.
 
-COMMON_TIMER_VER = 10
+COMMON_TIMER_VER = 13
 
-do	--Globals
+do --Globals
 	Timer = Timer or {}
 	TimerFunctions = TimerFunctions or {}
 
@@ -40,9 +40,13 @@ function CancelTimer (timerId)
 		end
 
 		if (timer.Cancel) then
-			Timer [timerId] = timer:Cancel ()
-		else
-			Timer [timerId] = nil
+			timer:Cancel ()
+		end
+		Timer [timerId] = nil
+		for k, v in pairs (Timer) do
+			if (v == timer) then
+				Timer [k] = nil
+			end
 		end
 		TimerFunctions [timer] = nil
 	end
@@ -52,8 +56,21 @@ end
 function SetTimer (timerId, delay, timerFunction, repeating)
 	CancelTimer (timerId)
 
+	if (type (timerId) == 'nil') then
+		local output = {
+			'SetTimer anonymous timerId',
+			tostring (debug.getinfo(2, 'n').name),
+		}
+		dbg (table.concat (output, ' : '))
+	end
+
 	if (type (timerFunction) ~= 'function') then
 		timerFunction = nil
+	end
+
+	if (delay > ((2 ^ 31) - 1)) then
+		print ('Timer not created: ' .. tostring (timerId), 'delay exceeded max value (2^31 - 1)')
+		return
 	end
 
 	if (timerFunction == nil) then
@@ -70,10 +87,12 @@ function SetTimer (timerId, delay, timerFunction, repeating)
 	local _timer = function (timer, skips)
 		if (TimerFunctions [timer]) then
 			local success, ret = pcall (TimerFunctions [timer], timer, skips)
-			if (DEBUG_TIMER) then
-				if (success == true) then
+			if (success == true) then
+				if (DEBUG_TIMER) then
 					print ('Timer completed: ', timerId, ret)
-				elseif (success == false) then
+				end
+			elseif (success == false) then
+				if (DEBUG_TIMER) then
 					print ('Timer Regular Expire Lua error: ', timerId, ret)
 				end
 			end
@@ -90,15 +109,24 @@ function SetTimer (timerId, delay, timerFunction, repeating)
 		print ('Timer created: ' .. tostring (timerId))
 	end
 
-	local timer = C4:SetTimer (delay, _timer, (repeating == true))
-	TimerFunctions [timer] = timerFunction
+	local timer
 
-	if (type (timerId) == 'string') then
-		if (timerId and timer) then
-			Timer [timerId] = timer
-		end
+	local success, ret = pcall (C4.SetTimer, C4, delay, _timer, (repeating == true))
+	if (success) then
+		timer = ret
 	else
-		Timer [timer] = timer
+		print ('Timer creation Lua error: ', timerId, ret)
+		return
+	end
+
+	if (timer) then
+		TimerFunctions [timer] = timerFunction
+
+		if (type (timerId) == 'string') then
+			Timer [timerId] = timer
+		else
+			Timer [timer] = timer
+		end
 	end
 	return timer
 end
@@ -122,7 +150,6 @@ function ChangeTimer (timerId, delay, timerFunction, repeating)
 	if (delay == nil) then
 		TimerFunctions [timer] = timerFunction
 		return timer
-
 	else
 		return (SetTimer (timerId, delay, timerFunction, repeating))
 	end

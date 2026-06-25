@@ -1,32 +1,34 @@
--- Copyright 2022 Snap One, LLC. All rights reserved.
+-- Copyright 2026 Snap One, LLC. All rights reserved.
 
-COMMON_WEBSOCKET_VER = 7
+COMMON_WEBSOCKET_VER = 15
 
 require ('drivers-common-public.global.handlers')
 require ('drivers-common-public.global.timer')
 
 Metrics = require ('drivers-common-public.module.metrics')
 
-local WebSocket = {}
+local wsObject = {}
 
 do -- define globals
-	DEBUG_WEBSOCKET = false
+	DEBUG_WEBSOCKET = DEBUG_WEBSOCKET or false
 end
 
-function WebSocket:new (url, additionalHeaders, wssOptions)
+function wsObject:new (url, additionalHeaders, wssOptions)
 	if (type (additionalHeaders) ~= 'table') then
 		additionalHeaders = nil
 	end
 
-	if (WebSocket.Sockets and WebSocket.Sockets [url]) then
-		local ws = WebSocket.Sockets [url]
+	if (self.Sockets and self.Sockets [url]) then
+		local ws = self.Sockets [url]
 		ws.additionalHeaders = additionalHeaders
 		return ws
 	end
 
-	local protocol, host, port, resource -- important values to be incorporated into our WebSocket object
+	-- important values to be incorporated into our WebSocket object
+	local protocol, host, port, resource
 
-	local rest, hostport -- temporary values for parsing
+	-- temporary values for parsing
+	local rest, hostport
 
 	protocol, rest = string.match (url or '', '(wss?)://(.*)')
 
@@ -40,8 +42,10 @@ function WebSocket:new (url, additionalHeaders, wssOptions)
 
 	if (not (host and port)) then
 		host = hostport
-		if (protocol == 'ws') then port = 80
-		elseif (protocol == 'wss') then port = 443
+		if (protocol == 'ws') then
+			port = 80
+		elseif (protocol == 'wss') then
+			port = 443
 		end
 	end
 
@@ -60,17 +64,20 @@ function WebSocket:new (url, additionalHeaders, wssOptions)
 			resource = resource,
 			buf = '',
 			ping_interval = 30,
+			pong_response_interval = 10,
 			additionalHeaders = additionalHeaders or {},
 			wssOptions = wssOptions,
 		}
+
+		ws.timerPrefix = 'WS_' .. url .. '_Timer_'
 
 		setmetatable (ws, self)
 		self.__index = self
 
 		ws.metrics = Metrics:new ('dcp_websocket', COMMON_WEBSOCKET_VER)
 
-		WebSocket.Sockets = WebSocket.Sockets or {}
-		WebSocket.Sockets [url] = ws
+		self.Sockets = self.Sockets or {}
+		self.Sockets [url] = ws
 
 		ws.metrics:SetCounter ('Init')
 		ws:setupC4Connection ()
@@ -82,25 +89,15 @@ function WebSocket:new (url, additionalHeaders, wssOptions)
 	end
 end
 
-function WebSocket:delete ()
+function wsObject:delete ()
 	self.deleteAfterClosing = true
 	self:Close ()
-	if (WebSocket.Sockets) then
-		if (self.url) then
-			WebSocket.Sockets [self.url] = nil
-		end
-		if (self.netBinding) then
-			OCS [self.netBinding] = nil
-			RFN [self.netBinding] = nil
-			WebSocket.Sockets [self.netBinding] = nil
-		end
-	end
 
 	self.metrics:SetCounter ('Delete')
 	return nil
 end
 
-function WebSocket:Start ()
+function wsObject:Start ()
 	print ('Starting Web Socket... Opening net connection to ' .. self.url)
 
 	if (self.netBinding and self.protocol and self.port) then
@@ -115,7 +112,7 @@ function WebSocket:Start ()
 	return self
 end
 
-function WebSocket:Close ()
+function wsObject:Close ()
 	self.running = false
 	if (self.connected) then
 		local pkt = string.char (0x88, 0x82, 0x00, 0x00, 0x00, 0x00, 0x03, 0xE8)
@@ -129,16 +126,31 @@ function WebSocket:Close ()
 		C4:NetDisconnect (self.netBinding, self.port)
 		if (self.deleteAfterClosing) then
 			self.deleteAfterClosing = nil
+
+			if (self.Sockets) then
+				if (self.url) then
+					self.Sockets [self.url] = nil
+				end
+				if (self.netBinding) then
+					OCS [self.netBinding] = nil
+					RFN [self.netBinding] = nil
+					self.Sockets [self.netBinding] = nil
+				end
+			end
+
 			C4:SetBindingAddress (self.netBinding, '')
 		end
 	end
 
-	self.ClosingTimer = SetTimer (self.ClosingTimer, 3 * ONE_SECOND, _timer)
+	CancelTimer (self.timerPrefix .. 'Ping')
+	CancelTimer (self.timerPrefix .. 'PongResponse')
+
+	SetTimer (self.timerPrefix .. 'Closing', 3 * ONE_SECOND, _timer)
 
 	return self
 end
 
-function WebSocket:Send (s)
+function wsObject:Send (s)
 	if (self.connected) then
 		local len = string.len (s)
 		local lenstr
@@ -167,15 +179,15 @@ function WebSocket:Send (s)
 
 		table.insert (pkt, self:Mask (s, mask))
 
-		pkt = table.concat (pkt)
+		local pkt = table.concat (pkt)
 		if (DEBUG_WEBSOCKET) then
-			local d = {'', 'TX'}
+			local d = { '', 'TX', }
 
 			table.insert (d, '')
 			table.insert (d, s)
 			table.insert (d, '')
 
-			d = table.concat (d, '\r\n')
+			local d = table.concat (d, '\r\n')
 
 			print (d)
 		end
@@ -185,7 +197,7 @@ function WebSocket:Send (s)
 	return self
 end
 
-function WebSocket:SetProcessMessageFunction (f)
+function wsObject:SetProcessMessageFunction (f)
 	local _f = function (websocket, data)
 		local success, ret = pcall (f, websocket, data)
 		if (success == false) then
@@ -198,12 +210,12 @@ function WebSocket:SetProcessMessageFunction (f)
 	return self
 end
 
-function WebSocket:SetClosedByRemoteFunction (f)
+function wsObject:SetClosedByRemoteFunction (f)
 	local _f = function (websocket)
 		local success, ret = pcall (f, websocket)
 		if (success == false) then
 			self.metrics:SetCounter ('Error_ClosedByRemoteCallback')
-			print ('Websocket callback ClosedByRemote error: ', ret, data)
+			print ('Websocket callback ClosedByRemote error: ', ret)
 		end
 	end
 	self.ClosedByRemote = _f
@@ -211,12 +223,12 @@ function WebSocket:SetClosedByRemoteFunction (f)
 	return self
 end
 
-function WebSocket:SetEstablishedFunction (f)
+function wsObject:SetEstablishedFunction (f)
 	local _f = function (websocket)
 		local success, ret = pcall (f, websocket)
 		if (success == false) then
 			self.metrics:SetCounter ('Error_EstablishedCallback')
-			print ('Websocket callback Established error: ', ret, data)
+			print ('Websocket callback Established error: ', ret)
 		end
 	end
 	self.Established = _f
@@ -224,12 +236,12 @@ function WebSocket:SetEstablishedFunction (f)
 	return self
 end
 
-function WebSocket:SetOfflineFunction (f)
+function wsObject:SetOfflineFunction (f)
 	local _f = function (websocket)
 		local success, ret = pcall (f, websocket)
 		if (success == false) then
 			self.metrics:SetCounter ('Error_OfflineCallback')
-			print ('Websocket callback Offline error: ', ret, data)
+			print ('Websocket callback Offline error: ', ret)
 		end
 	end
 	self.Offline = _f
@@ -239,7 +251,7 @@ end
 
 -- Functions below this line should not be called directly by users of this library
 
-function WebSocket:setupC4Connection ()
+function wsObject:setupC4Connection ()
 	local i = 6100
 	while (not self.netBinding and i < 6200) do
 		local checkAddress = C4:GetBindingAddress (i)
@@ -250,8 +262,8 @@ function WebSocket:setupC4Connection ()
 	end
 
 	if (self.netBinding and self.protocol) then
-		WebSocket.Sockets = WebSocket.Sockets or {}
-		WebSocket.Sockets [self.netBinding] = self
+		self.Sockets = self.Sockets or {}
+		self.Sockets [self.netBinding] = self
 
 		if (self.protocol == 'wss') then
 			C4:CreateNetworkConnection (self.netBinding, self.host, 'SSL')
@@ -275,7 +287,7 @@ function WebSocket:setupC4Connection ()
 	return self
 end
 
-function WebSocket:MakeHeaders ()
+function wsObject:MakeHeaders ()
 	self.key = ''
 	for i = 1, 16 do
 		self.key = self.key .. string.char (math.random (33, 125))
@@ -300,12 +312,12 @@ function WebSocket:MakeHeaders ()
 
 	table.insert (headers, '\r\n')
 
-	headers = table.concat (headers, '\r\n')
+	local headers = table.concat (headers, '\r\n')
 
 	return headers
 end
 
-function WebSocket:ParsePacket (strData)
+function wsObject:ParsePacket (strData)
 	self.buf = (self.buf or '') .. strData
 
 	if (self.running) then
@@ -315,13 +327,10 @@ function WebSocket:ParsePacket (strData)
 	end
 end
 
-function WebSocket:parseWSPacket ()
-	local buflen = string.len (self.buf)
-	if (buflen < 2) then
-		return
-	end
-
-	local h1, h2 = string.byte (self.buf, 1, 2)
+function wsObject:parseWSPacket ()
+	--diagnostic disables are because Driverworks embeds lpack which has different formats to Lua5.3 string.pack/unpack
+	---@diagnostic disable-next-line: deprecated
+	local _, h1, h2, b1, b2, b3, b4, b5, b6, b7, b8 = string.unpack (self.buf, 'bbbbbbbbbb')
 
 	local final = (bit.band (h1, 0x80) == 0x80)
 	local rsv1 = (bit.band (h1, 0x40) == 0x40)
@@ -329,8 +338,10 @@ function WebSocket:parseWSPacket ()
 	local rsv3 = (bit.band (h1, 0x10) == 0x10)
 	local opcode = bit.band (h1, 0x0F)
 
+	---@diagnostic disable-next-line: param-type-mismatch
 	local masked = (bit.band (h2, 0x80) == 0x80)
 	local mask
+	---@diagnostic disable-next-line: param-type-mismatch
 	local len = bit.band (h2, 0x7F)
 
 	local msglen = 0
@@ -339,20 +350,12 @@ function WebSocket:parseWSPacket ()
 		-- 1-byte length
 		msglen = len
 	elseif (len == 126) then
-		if (buflen < 4) then
-			return
-		end
 		-- 2-byte length
-		local b1, b2 = string.byte (self.buf, 3, 4)
 		msglen = msglen + b1; msglen = msglen * 0x100
 		msglen = msglen + b2;
 		headerlen = 4
 	elseif (len == 127) then
-		if (buflen < 10) then
-			return
-		end
 		-- 8-byte length
-		local b1, b2, b3, b4, b5, b6, b7, b8 = string.byte (self.buf, 3, 10)
 		msglen = msglen + b1; msglen = msglen * 0x100
 		msglen = msglen + b2; msglen = msglen * 0x100
 		msglen = msglen + b3; msglen = msglen * 0x100
@@ -365,9 +368,6 @@ function WebSocket:parseWSPacket ()
 	end
 
 	if (masked) then
-		if (buflen < headerlen + 4) then
-			return
-		end
 		local maskbytes = string.sub (self.buf, headerlen + 1, headerlen + 5)
 		mask = {}
 		for i = 1, 4 do
@@ -398,18 +398,16 @@ function WebSocket:parseWSPacket ()
 			if (self.ClosedByRemote) then
 				self:ClosedByRemote ()
 			end
-
 		elseif (opcode == 0x09) then -- ping control frame
 			if (DEBUG_WEBSOCKET) then
 				print ('RX PING')
 			end
 			self:Pong ()
-
 		elseif (opcode == 0x0A) then -- pong control frame
 			if (DEBUG_WEBSOCKET) then
 				print ('RX PONG')
 			end
-
+			CancelTimer (self.timerPrefix .. 'PongResponse')
 		elseif (opcode == 0x00) then -- continuation frame
 			if (not self.fragment) then
 				self.metrics:SetCounter ('Error_FramesOutOfOrder')
@@ -418,7 +416,6 @@ function WebSocket:parseWSPacket ()
 				return
 			end
 			self.fragment = self.fragment .. thisFragment
-
 		elseif (opcode == 0x01 or opcode == 0x02) then -- non-control frame, beginning of fragment
 			self.fragment = thisFragment
 		end
@@ -428,13 +425,13 @@ function WebSocket:parseWSPacket ()
 			self.fragment = nil
 
 			if (DEBUG_WEBSOCKET) then
-				local d = {'', 'RX'}
+				local d = { '', 'RX', }
 
 				table.insert (d, '')
 				table.insert (d, data)
 				table.insert (d, '')
 
-				d = table.concat (d, '\r\n')
+				local d = table.concat (d, '\r\n')
 
 				print (d)
 			end
@@ -450,7 +447,7 @@ function WebSocket:parseWSPacket ()
 	end
 end
 
-function WebSocket:parseHTTPPacket ()
+function wsObject:parseHTTPPacket ()
 	local headers = {}
 	for line in string.gmatch (self.buf, '(.-)\r\n') do
 		local k, v = string.match (line, '%s*(.-)%s*[:/*]%s*(.+)')
@@ -465,11 +462,12 @@ function WebSocket:parseHTTPPacket ()
 	if (EOH and headers ['SEC-WEBSOCKET-ACCEPT']) then
 		self.buf = string.sub (self.buf, EOH + 4)
 		local check = self.key .. '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-		local hash = C4:Hash ('sha1', check, {['return_encoding'] = 'BASE64'})
+		local hash = C4:Hash ('SHA1', check, { ['return_encoding'] = 'BASE64', })
 
 		if (headers ['SEC-WEBSOCKET-ACCEPT'] == hash and
-			headers ['UPGRADE'] == 'websocket' and
-			string.lower (headers ['CONNECTION']) == 'upgrade') then
+				string.lower (headers ['UPGRADE']) == 'websocket' and
+				string.lower (headers ['CONNECTION']) == 'upgrade') then
+			print ('WS ' .. self.url .. ' running')
 
 			self.running = true
 			self.metrics:SetCounter ('Running')
@@ -480,18 +478,26 @@ function WebSocket:parseHTTPPacket ()
 	end
 end
 
-function WebSocket:Ping ()
+function wsObject:Ping ()
 	if (self.connected) then
 		-- MASK of 0x00's
 		local pkt = string.char (0x89, 0x80, 0x00, 0x00, 0x00, 0x00)
 		if (DEBUG_WEBSOCKET) then
 			print ('TX PING')
 		end
-	self:sendToNetwork (pkt)
+
+		local _timer = function (timer)
+			self.metrics:SetCounter ('MissingPong')
+			print ('WS ' .. self.url .. ' appears disconnected - timed out waiting for PONG')
+			self:Close ()
+		end
+		SetTimer (self.timerPrefix .. 'PongResponse', self.pong_response_interval * ONE_SECOND, _timer)
+
+		self:sendToNetwork (pkt)
 	end
 end
 
-function WebSocket:Pong ()
+function wsObject:Pong ()
 	if (self.connected) then
 		local pkt = string.char (0x8A, 0x80, 0x00, 0x00, 0x00, 0x00)
 		if (DEBUG_WEBSOCKET) then
@@ -501,9 +507,12 @@ function WebSocket:Pong ()
 	end
 end
 
-function WebSocket:ConnectionChanged (strStatus)
+function wsObject:ConnectionChanged (strStatus)
 	self.connected = (strStatus == 'ONLINE')
-	if (self.PingTimer) then self.PingTimer = self.PingTimer:Cancel () end
+
+	CancelTimer (self.timerPrefix .. 'Ping')
+	CancelTimer (self.timerPrefix .. 'PongResponse')
+
 	if (self.connected) then
 		local pkt = self:MakeHeaders ()
 		self:sendToNetwork (pkt)
@@ -511,7 +520,7 @@ function WebSocket:ConnectionChanged (strStatus)
 		local _timer = function (timer)
 			self:Ping ()
 		end
-		self.PingTimer = SetTimer (self.PingTimer, self.ping_interval * ONE_SECOND, _timer, true)
+		SetTimer (self.timerPrefix .. 'Ping', self.ping_interval * ONE_SECOND, _timer, true)
 		self.metrics:SetCounter ('Connected')
 		print ('WS ' .. self.url .. ' connected')
 	else
@@ -529,11 +538,11 @@ function WebSocket:ConnectionChanged (strStatus)
 	end
 end
 
-function WebSocket:sendToNetwork (packet)
+function wsObject:sendToNetwork (packet)
 	C4:SendToNetwork (self.netBinding, self.port, packet)
 end
 
-function WebSocket:Mask (s, mask)
+function wsObject:Mask (s, mask)
 	if (type (mask) == 'table') then
 	elseif (type (mask) == 'string' and string.len (mask) >= 4) then
 		local m = {}
@@ -558,8 +567,8 @@ function WebSocket:Mask (s, mask)
 		table.insert (packet, char)
 	end
 
-	packet = table.concat (packet)
+	local packet = table.concat (packet)
 	return (packet)
 end
 
-return WebSocket
+return wsObject

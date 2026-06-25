@@ -1,19 +1,19 @@
--- Copyright 2020 Control4 Corporation. All rights reserved.
+-- Copyright 2026 Snap One, LLC. All rights reserved.
 
-COMMON_SSDP_VER = 8
+COMMON_SSDP_VER = 12
 
 require ('drivers-common-public.global.lib')
 require ('drivers-common-public.global.handlers')
 require ('drivers-common-public.global.timer')
 require ('drivers-common-public.global.url')
 
-local SSDP = {}
+local ssdpObject = {}
 
-function SSDP:new (searchTarget, options)
+function ssdpObject:new (searchTarget, options)
 	searchTarget = searchTarget or 'upnp:rootdevice'
 
-	if (SSDP.SearchTargets and SSDP.SearchTargets [searchTarget]) then
-		local ssdp = SSDP.SearchTargets [searchTarget]
+	if (self.SearchTargets and self.SearchTargets [searchTarget]) then
+		local ssdp = self.SearchTargets [searchTarget]
 		return ssdp
 	end
 
@@ -27,39 +27,42 @@ function SSDP:new (searchTarget, options)
 		bcIP = '255.255.255.255',
 		mcOnly = options.mcOnly,
 		bcOnly = options.bcOnly,
-		friendlyNameTag = options.friendlyNameTag or 'friendlyName'
+		friendlyNameTag = options.friendlyNameTag or 'friendlyName',
+		rescanInterval = options.rescanInterval or (5 * ONE_MINUTE),
 	}
+
+	ssdp.timerPrefix = 'SSDP_' .. searchTarget .. '_Timer_'
 
 	setmetatable (ssdp, self)
 	self.__index = self
 
-	SSDP.SearchTargets = SSDP.SearchTargets or {}
-	SSDP.SearchTargets [searchTarget] = ssdp
+	self.SearchTargets = self.SearchTargets or {}
+	self.SearchTargets [searchTarget] = ssdp
 
 	ssdp:setupC4Connection ()
 
 	return ssdp
 end
 
-function SSDP:delete ()
+function ssdpObject:delete ()
 	self:disconnect ()
 
-	if (SSDP.SearchTargets) then
+	if (self.SearchTargets) then
 		if (self.searchTarget) then
-			SSDP.SearchTargets [self.searchTarget] = nil
+			self.SearchTargets [self.searchTarget] = nil
 		end
 
 		if (self.mcBinding) then
 			OCS [self.mcBinding] = nil
 			RFN [self.mcBinding] = nil
-			SSDP.SearchTargets [self.mcBinding] = nil
+			self.SearchTargets [self.mcBinding] = nil
 			C4:SetBindingAddress (self.mcBinding, '')
 		end
 
 		if (self.bcBinding) then
 			OCS [self.bcBinding] = nil
 			RFN [self.bcBinding] = nil
-			SSDP.SearchTargets [self.bcBinding] = nil
+			self.SearchTargets [self.bcBinding] = nil
 			C4:SetBindingAddress (self.bcBinding, '')
 		end
 	end
@@ -67,7 +70,7 @@ function SSDP:delete ()
 	return nil
 end
 
-function SSDP:StartDiscovery (resetLocations)
+function ssdpObject:StartDiscovery (resetLocations)
 	self:StopDiscovery (resetLocations)
 
 	self:connect ()
@@ -76,22 +79,22 @@ function SSDP:StartDiscovery (resetLocations)
 		self:connect ()
 	end
 
-	self.repeatingDiscoveryTimer = SetTimer (self.repeatingDiscoveryTimer, 5 * ONE_MINUTE, _timer, true)
+	SetTimer (self.timerPrefix .. 'RepeatingDiscovery', self.rescanInterval, _timer, true)
 end
 
-function SSDP:StopDiscovery (resetLocations)
+function ssdpObject:StopDiscovery (resetLocations)
 	if (resetLocations) then
-		for location, timer in pairs (self.locations or {}) do
-			self.locations [location] = CancelTimer (timer)
+		for location, _ in pairs (self.locations or {}) do
+			self.locations [location] = CancelTimer (self.timerPrefix .. 'Location_' .. location)
 		end
 	end
 
-	self.repeatingDiscoveryTimer = CancelTimer (self.repeatingDiscoveryTimer)
+	CancelTimer (self.timerPrefix .. 'RepeatingDiscovery')
 
 	self:disconnect ()
 end
 
-function SSDP:SetProcessXMLFunction (f)
+function ssdpObject:SetProcessXMLFunction (f)
 	local _f = function (s, uuid, data, headers)
 		local success, ret = pcall (f, s, uuid, data, headers)
 	end
@@ -100,7 +103,7 @@ function SSDP:SetProcessXMLFunction (f)
 	return self
 end
 
-function SSDP:SetUpdateDevicesFunction (f)
+function ssdpObject:SetUpdateDevicesFunction (f)
 	local _f = function (s, devices)
 		local success, ret = pcall (f, s, devices)
 	end
@@ -109,7 +112,7 @@ function SSDP:SetUpdateDevicesFunction (f)
 	return self
 end
 
-function SSDP:setupC4Connection ()
+function ssdpObject:setupC4Connection ()
 	local i = 6999
 	if (not self.bcOnly) then
 		while (not self.mcBinding and i > 6900) do
@@ -143,7 +146,6 @@ function SSDP:setupC4Connection ()
 			if (self.mcConnected) then
 				self:sendDiscoveryPacket (self.mcBinding)
 			end
-
 		elseif (idBinding == self.bcBinding) then
 			self.bcConnected = (strStatus == 'ONLINE')
 			if (self.bcConnected) then
@@ -153,8 +155,8 @@ function SSDP:setupC4Connection ()
 	end
 
 	if (self.bcBinding) then
-		SSDP.SearchTargets = SSDP.SearchTargets or {}
-		SSDP.SearchTargets [self.bcBinding] = self
+		self.SearchTargets = self.SearchTargets or {}
+		self.SearchTargets [self.bcBinding] = self
 
 		RFN [self.bcBinding] = parseResponse
 		OCS [self.bcBinding] = isOnline
@@ -163,8 +165,8 @@ function SSDP:setupC4Connection ()
 	end
 
 	if (self.mcBinding) then
-		SSDP.SearchTargets = SSDP.SearchTargets or {}
-		SSDP.SearchTargets [self.mcBinding] = self
+		self.SearchTargets = self.SearchTargets or {}
+		self.SearchTargets [self.mcBinding] = self
 
 		RFN [self.mcBinding] = parseResponse
 		OCS [self.mcBinding] = isOnline
@@ -175,7 +177,7 @@ function SSDP:setupC4Connection ()
 	return self
 end
 
-function SSDP:connect ()
+function ssdpObject:connect ()
 	self:disconnect ()
 
 	if (self.mcBinding) then
@@ -186,17 +188,16 @@ function SSDP:connect ()
 	end
 end
 
-function SSDP:disconnect ()
+function ssdpObject:disconnect ()
 	if (self.mcBinding) then
-		C4:NetDisconnect (self.mcBinding, 1900, 'UDP')
+		C4:NetDisconnect (self.mcBinding, 1900)
 	end
 	if (self.bcBinding) then
-		C4:NetDisconnect (self.bcBinding, 1900, 'UDP')
+		C4:NetDisconnect (self.bcBinding, 1900)
 	end
 end
 
-function SSDP:sendDiscoveryPacket (binding)
-
+function ssdpObject:sendDiscoveryPacket (binding)
 	local ip, online
 
 	if (binding == self.mcBinding) then
@@ -208,7 +209,6 @@ function SSDP:sendDiscoveryPacket (binding)
 	end
 
 	if (ip and online) then
-
 		local packet = {
 			'M-SEARCH * HTTP/1.1',
 			'HOST: ' .. ip .. ':1900',
@@ -218,7 +218,7 @@ function SSDP:sendDiscoveryPacket (binding)
 			'',
 		}
 
-		packet = table.concat (packet, '\r\n')
+		local packet = table.concat (packet, '\r\n')
 
 		for i = 1, 3 do
 			C4:SendToNetwork (binding, 1900, packet)
@@ -226,7 +226,7 @@ function SSDP:sendDiscoveryPacket (binding)
 	end
 end
 
-function SSDP:parseResponse (data)
+function ssdpObject:parseResponse (data)
 	local headers = {}
 	for line in string.gmatch (data, '(.-)\r\n') do
 		local k, v = string.match (line, '%s*(.-)%s*[:/*]%s*(.+)')
@@ -242,10 +242,8 @@ function SSDP:parseResponse (data)
 
 	if (headers.HTTP and headers.HTTP == '1.1 200 OK') then
 		alive = true
-
 	elseif (headers.NOTIFY and headers.NTS and headers.NTS == 'ssdp:alive') then
 		alive = true
-
 	elseif (headers.NOTIFY and headers.NTS and headers.NTS == 'ssdp:byebye') then
 		byebye = true
 	end
@@ -256,6 +254,9 @@ function SSDP:parseResponse (data)
 			interval = string.match (headers ['CACHE-CONTROL'], 'max-age = (%d+)')
 		end
 		interval = tonumber (interval) or 1800
+		if (interval < self.rescanInterval) then
+			interval = self.rescanInterval
+		end
 
 		if (headers.LOCATION and headers.USN) then
 			local location = headers.LOCATION
@@ -279,11 +280,11 @@ function SSDP:parseResponse (data)
 			local usnUUID = string.match (headers.USN, 'uuid:(.*)')
 
 			if (usnUUID and usnUUID == self.CurrentDeviceUUID) then
-				self.rediscoverCurrentDeviceTimer = CancelTimer (self.rediscoverCurrentDeviceTimer)
+				CancelTimer (self.timerPrefix .. 'RediscoverCurrentDevice')
 			end
 
 			if (self.devices [usnUUID] and self.devices [usnUUID].udnUUID == self.CurrentDeviceUUID) then
-				self.rediscoverCurrentDeviceTimer = CancelTimer (self.rediscoverCurrentDeviceTimer)
+				CancelTimer (self.timerPrefix .. 'RediscoverCurrentDevice')
 			end
 
 			if (usnUUID) then
@@ -307,19 +308,18 @@ function SSDP:parseResponse (data)
 				end
 
 				local _timer = function (timer)
-					self.locations [location] = nil
+					self.locations [location] = CancelTimer (self.timerPrefix .. 'Location_' .. location)
 					for uuid, device in pairs (self.devices or {}) do
 						if (device.LOCATION == location) then
 							self:deviceOffline (uuid)
 						end
 					end
 				end
-				self.locations [location] = SetTimer (self.locations [location], interval * ONE_SECOND * 1.005, _timer)
+				self.locations [location] = SetTimer (self.timerPrefix .. 'Location_' .. location, interval * ONE_SECOND * 1.005, _timer)
 
 				self:updateDevices ()
 			end
 		end
-
 	elseif (byebye) then
 		if (headers.USN) then
 			local usnUUID = string.match (headers.USN, 'uuid:(.+)')
@@ -328,11 +328,10 @@ function SSDP:parseResponse (data)
 	end
 end
 
-function SSDP:deviceOffline (uuid)
-
+function ssdpObject:deviceOffline (uuid)
 	local deviceGoOfflineNow = function (device)
 		local location = device.LOCATION
-		self.locations [location] = CancelTimer (self.locations [location])
+		self.locations [location] = CancelTimer (self.timerPrefix .. 'Location_' .. location)
 
 		self.devices [device.usnUUID] = nil
 		self.devices [device.udnUUID] = nil
@@ -342,7 +341,7 @@ function SSDP:deviceOffline (uuid)
 				self:connect ()
 			end
 
-			self.rediscoverCurrentDeviceTimer = SetTimer (self.rediscoverCurrentDeviceTimer, 10 * ONE_SECOND, _timer, true)
+			SetTimer (self.timerPrefix .. 'RediscoverCurrentDevice', 10 * ONE_SECOND, _timer, true)
 		end
 	end
 
@@ -355,17 +354,18 @@ function SSDP:deviceOffline (uuid)
 	self:updateDevices ()
 end
 
-function SSDP:updateDevices ()
+function ssdpObject:updateDevices ()
 	local _timer = function (timer)
 		if (self.UpdateDevices and type (self.UpdateDevices == 'function')) then
 			pcall (self.UpdateDevices, self, CopyTable (self.devices))
 		end
 	end
 
-	self.updateDevicesTimer = SetTimer (self.updateDevicesTimer, ONE_SECOND, _timer)
+	local timerId = 'SSDP:' .. self.searchTarget .. ':updateDevices'
+	SetTimer (timerId, ONE_SECOND, _timer)
 end
 
-function SSDP:parseXML (strError, responseCode, tHeaders, data, context, url)
+function ssdpObject:parseXML (strError, responseCode, tHeaders, data, context, url)
 	if (strError) then
 		print ('Error retrieving device XML: ' .. (context.usnUUID or 'Unknown USN UUID') .. ' : url: ' .. url)
 		return
@@ -385,7 +385,7 @@ function SSDP:parseXML (strError, responseCode, tHeaders, data, context, url)
 
 		local friendlyName = XMLDecode (string.match (data, '<' .. self.friendlyNameTag .. '>(.-)</' .. self.friendlyNameTag .. '>'))
 
-		for k,v in pairs (tHeaders) do
+		for k, v in pairs (tHeaders) do
 			if (string.upper (k) == 'APPLICATION-URL') then
 				local dialServer = v
 				if (string.sub (dialServer, -1, -1) ~= '/') then
@@ -405,8 +405,7 @@ function SSDP:parseXML (strError, responseCode, tHeaders, data, context, url)
 			pcall (self.ProcessXML, self, context.usnUUID, data, tHeaders)
 		end
 		self:updateDevices ()
-
 	end
 end
 
-return SSDP
+return ssdpObject
